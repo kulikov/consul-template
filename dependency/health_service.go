@@ -223,7 +223,7 @@ func ParseHealthServices(s ...string) (*HealthServices, error) {
 
 	re := regexp.MustCompile(`\A` +
 		`((?P<tag>[[:word:]\-.]+)\.)?` +
-		`((?P<name>[[:word:]\-/_]+))` +
+		`((?P<name>[[:word:]\-/_.]+))` +
 		`(@(?P<datacenter>[[:word:]\.\-]+))?(:(?P<port>[0-9]+))?` +
 		`\z`)
 	names := re.SubexpNames()
