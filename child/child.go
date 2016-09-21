@@ -149,7 +149,7 @@ func (c *Child) Start() error {
 // Signal sends the signal to the child process, returning any errors that
 // occur.
 func (c *Child) Signal(s os.Signal) error {
-	log.Printf("[INFO] (child) signaling %s", s.String())
+	log.Printf("[INFO] (child) receiving signal %q", s.String())
 	c.RLock()
 	defer c.RUnlock()
 	return c.signal(s)
@@ -213,10 +213,9 @@ func (c *Child) Stop() {
 		log.Printf("[WARN] (child) already stopped")
 		return
 	}
+	c.kill()
 	close(c.stopCh)
 	c.stopped = true
-
-	c.kill()
 }
 
 func (c *Child) start() error {

@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/hashicorp/consul-template/child"
@@ -75,6 +76,9 @@ type Runner struct {
 	// child is the child process under management. This may be nil if not running
 	// in exec mode.
 	child *child.Child
+
+	// childLock is the internal lock around the child process.
+	childLock sync.RWMutex
 
 	// quiescenceMap is the map of templates to their quiescence timers.
 	// quiescenceCh is the channel where templates report returns from quiescence
@@ -198,6 +202,21 @@ func (r *Runner) Start() {
 			// then we should exit here.
 			if r.once {
 				log.Printf("[INFO] (runner) once mode and all templates rendered")
+
+				if r.child != nil {
+					r.stopDedup()
+					r.stopWatcher()
+
+					log.Printf("[INFO] (runner) waiting for child process to exit")
+					select {
+					case c := <-childExitCh:
+						log.Printf("[INFO] (runner) child process died")
+						r.ErrCh <- NewErrChildDied(c)
+						return
+					case <-r.DoneCh:
+					}
+				}
+
 				r.Stop()
 				return
 			}
@@ -256,7 +275,7 @@ func (r *Runner) Start() {
 
 		case c := <-childExitCh:
 			log.Printf("[INFO] (runner) child process died")
-			r.ErrCh <- fmt.Errorf("child process died with exit code %d", c)
+			r.ErrCh <- NewErrChildDied(c)
 			return
 
 		case <-r.DoneCh:
@@ -276,14 +295,9 @@ func (r *Runner) Start() {
 // Stop halts the execution of this runner and its subprocesses.
 func (r *Runner) Stop() {
 	log.Printf("[INFO] (runner) stopping")
-	if r.dedup != nil {
-		r.dedup.Stop()
-	}
-	r.watcher.Stop()
-
-	if r.child != nil {
-		r.child.Stop()
-	}
+	r.stopDedup()
+	r.stopWatcher()
+	r.stopChild()
 
 	if err := r.deletePid(); err != nil {
 		log.Printf("[WARN] (runner) could not remove pid at %q: %s",
@@ -291,6 +305,36 @@ func (r *Runner) Stop() {
 	}
 
 	close(r.DoneCh)
+}
+
+func (r *Runner) stopDedup() {
+	if r.dedup != nil {
+		log.Printf("[DEBUG] (runner) stopping de-duplication manager")
+		r.dedup.Stop()
+	} else {
+		log.Printf("[DEBUG] (runner) de-duplication manager is not running")
+	}
+}
+
+func (r *Runner) stopWatcher() {
+	if r.watcher != nil {
+		log.Printf("[DEBUG] (runner) stopping watcher")
+		r.watcher.Stop()
+	} else {
+		log.Printf("[DEBUG] (runner) watcher is not running")
+	}
+}
+
+func (r *Runner) stopChild() {
+	r.childLock.RLock()
+	defer r.childLock.RUnlock()
+
+	if r.child != nil {
+		log.Printf("[DEBUG] (runner) stopping child process")
+		r.child.Stop()
+	} else {
+		log.Printf("[DEBUG] (runner) child is not running")
+	}
 }
 
 // Receive accepts a Dependency and data for that dep. This data is
@@ -320,6 +364,8 @@ func (r *Runner) Receive(d dep.Dependency, data interface{}) {
 // Signal sends a signal to the child process, if it exists. Any errors that
 // occur are returned.
 func (r *Runner) Signal(s os.Signal) error {
+	r.childLock.RLock()
+	defer r.childLock.RUnlock()
 	if r.child == nil {
 		return nil
 	}
@@ -492,9 +538,11 @@ func (r *Runner) Run() error {
 	// If we got this far and have a child process, we need to send the reload
 	// signal to the child process.
 	if renderedAny && r.child != nil {
+		r.childLock.RLock()
 		if err := r.child.Reload(); err != nil {
 			errs = append(errs, err)
 		}
+		r.childLock.RUnlock()
 	}
 
 	// If any errors were returned, convert them to an ErrorList for human
@@ -539,7 +587,7 @@ func (r *Runner) init() error {
 	}
 	r.watcher = watcher
 
-	templatesMap := make(map[string]*Template)
+	templates := make([]*Template, 0, len(r.config.ConfigTemplates))
 	ctemplatesMap := make(map[string][]*ConfigTemplate)
 
 	// Iterate over each ConfigTemplate, creating a new Template resource for each
@@ -552,8 +600,8 @@ func (r *Runner) init() error {
 			return err
 		}
 
-		if _, ok := templatesMap[tmpl.Path]; !ok {
-			templatesMap[tmpl.Path] = tmpl
+		if _, ok := ctemplatesMap[tmpl.Path]; !ok {
+			templates = append(templates, tmpl)
 		}
 
 		if _, ok := ctemplatesMap[tmpl.Path]; !ok {
@@ -564,10 +612,6 @@ func (r *Runner) init() error {
 
 	// Convert the map of templates (which was only used to ensure uniqueness)
 	// back into an array of templates.
-	templates := make([]*Template, 0, len(templatesMap))
-	for _, tmpl := range templatesMap {
-		templates = append(templates, tmpl)
-	}
 	r.templates = templates
 
 	r.renderedTemplates = make(map[string]struct{})
@@ -811,6 +855,9 @@ func (r *Runner) deletePid() error {
 
 // spawnChild creates a new child process and stores it on the runner object.
 func (r *Runner) spawnChild() error {
+	r.childLock.Lock()
+	defer r.childLock.Unlock()
+
 	p := shellwords.NewParser()
 	p.ParseEnv = true
 	p.ParseBacktick = true

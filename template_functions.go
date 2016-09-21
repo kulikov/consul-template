@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/burntsushi/toml"
 	dep "github.com/hashicorp/consul-template/dependency"
 	yaml "gopkg.in/yaml.v2"
 )
@@ -483,8 +485,21 @@ func in(l, v interface{}) (bool, error) {
 
 	switch lv.Kind() {
 	case reflect.Array, reflect.Slice:
+		// if the slice contains 'interface' elements, then the element needs to be extracted directly to examine its type,
+		// otherwise it will just resolve to 'interface'.
+		var interfaceSlice []interface{}
+		if reflect.TypeOf(l).Elem().Kind() == reflect.Interface {
+			interfaceSlice = l.([]interface{})
+		}
+
 		for i := 0; i < lv.Len(); i++ {
-			lvv := lv.Index(i)
+			var lvv reflect.Value
+			if interfaceSlice != nil {
+				lvv = reflect.ValueOf(interfaceSlice[i])
+			} else {
+				lvv = lv.Index(i)
+			}
+
 			switch lvv.Kind() {
 			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 				switch vv.Kind() {
@@ -772,6 +787,20 @@ func toYAML(m map[string]interface{}) (string, error) {
 	result, err := yaml.Marshal(m)
 	if err != nil {
 		return "", fmt.Errorf("toYAML: %s", err)
+	}
+	return string(bytes.TrimSpace(result)), nil
+}
+
+// toTOML converts the given structure into a deeply nested TOML string.
+func toTOML(m map[string]interface{}) (string, error) {
+	buf := bytes.NewBuffer([]byte{})
+	enc := toml.NewEncoder(buf)
+	if err := enc.Encode(m); err != nil {
+		return "", fmt.Errorf("toTOML: %s", err)
+	}
+	result, err := ioutil.ReadAll(buf)
+	if err != nil {
+		return "", fmt.Errorf("toTOML: %s", err)
 	}
 	return string(bytes.TrimSpace(result)), nil
 }

@@ -9,13 +9,27 @@ NEW FEATURES:
       applications. Please see the [Exec Mode](README.md#exec-mode)
       documentation for more information.
 
+BREAKING CHANGES:
+
+  * Consul Template no longer terminates on SIGTERM or SIGQUIT. Previous
+      versions were hard-coded to listen for SIGINT, SIGTERM, and SIGQUIT. This
+      value is now configurable, and the default is SIGINT. SIGQUIT will trigger
+      a core dump in accordance with similar programs. SIGTERM is no longer
+      listened.
+
 IMPROVEMENTS:
 
   * Permit commas in key prefix names [GH-669]
+  * Add configurable kill and reload signals [GH-686]
 
 BUG FIXES:
 
   * Allow variadic template function for `secret` [GH-660, GH-662]
+  * Always log in UTC time
+  * Log milliseconds [GH-676, GH-674]
+  * Maintain template ordering [GH-683]
+  * Add `Service` address to catalog node response [GH-687]
+
 
 ## v0.15.0.dev (June 9, 2016)
 

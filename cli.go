@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"syscall"
@@ -62,6 +63,9 @@ func (cli *CLI) Run(args []string) int {
 	// Parse the flags
 	config, once, dry, version, err := cli.parseFlags(args[1:])
 	if err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
 		return cli.handleError(err, ExitCodeParseFlagsError)
 	}
 
@@ -100,20 +104,21 @@ func (cli *CLI) Run(args []string) int {
 	for {
 		select {
 		case err := <-runner.ErrCh:
-			return cli.handleError(err, ExitCodeRunnerError)
+			// Check if the runner's error returned a specific exit status, and return
+			// that value. If no value was given, return a generic exit status.
+			code := ExitCodeRunnerError
+			if typed, ok := err.(ErrExitable); ok {
+				code = typed.ExitStatus()
+			}
+			return cli.handleError(err, code)
 		case <-runner.DoneCh:
 			return ExitCodeOK
 		case s := <-signalCh:
-			// Propogate the signal to the child process
-			runner.Signal(s)
+			log.Printf("[DEBUG] (cli) receiving signal %q", s)
 
 			switch s {
-			case syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT:
-				fmt.Fprintf(cli.errStream, "Received interrupt, cleaning up...\n")
-				runner.Stop()
-				return ExitCodeInterrupt
-			case syscall.SIGHUP:
-				fmt.Fprintf(cli.errStream, "Received HUP, reloading configuration...\n")
+			case config.ReloadSignal:
+				fmt.Fprintf(cli.errStream, "Reloading configuration...\n")
 				runner.Stop()
 
 				// Load the new configuration from disk
@@ -127,6 +132,21 @@ func (cli *CLI) Run(args []string) int {
 					return cli.handleError(err, ExitCodeRunnerError)
 				}
 				go runner.Start()
+			case config.DumpSignal:
+				runner.Stop()
+				debug.PrintStack()
+				return ExitCodeInterrupt
+			case config.KillSignal:
+				fmt.Fprintf(cli.errStream, "Cleaning up...\n")
+				runner.Stop()
+				return ExitCodeInterrupt
+			case syscall.SIGCHLD:
+				// The SIGCHLD signal is sent to the parent of a child process when it
+				// exits, is interrupted, or resumes after being interrupted. We ignore
+				// this signal because the child process is monitored on its own.
+			default:
+				// Propogate the signal to the child process
+				runner.Signal(s)
 			}
 		case <-cli.stopCh:
 			return ExitCodeOK
@@ -171,6 +191,54 @@ func (cli *CLI) parseFlags(args []string) (*Config, bool, bool, bool, error) {
 		config.set("token")
 		return nil
 	}), "token", "")
+
+	flags.Var((funcVar)(func(s string) error {
+		if s == "" {
+			config.ReloadSignal = nil
+			config.set("reload_signal")
+			return nil
+		}
+
+		sig, err := signals.Parse(s)
+		if err != nil {
+			return err
+		}
+		config.ReloadSignal = sig
+		config.set("reload_signal")
+		return nil
+	}), "reload-signal", "")
+
+	flags.Var((funcVar)(func(s string) error {
+		if s == "" {
+			config.DumpSignal = nil
+			config.set("dump_signal")
+			return nil
+		}
+
+		sig, err := signals.Parse(s)
+		if err != nil {
+			return err
+		}
+		config.DumpSignal = sig
+		config.set("dump_signal")
+		return nil
+	}), "dump-signal", "")
+
+	flags.Var((funcVar)(func(s string) error {
+		if s == "" {
+			config.KillSignal = nil
+			config.set("kill_signal")
+			return nil
+		}
+
+		sig, err := signals.Parse(s)
+		if err != nil {
+			return err
+		}
+		config.KillSignal = sig
+		config.set("kill_signal")
+		return nil
+	}), "kill-signal", "")
 
 	flags.Var((funcVar)(func(s string) error {
 		config.Auth.Enabled = true
@@ -358,7 +426,7 @@ func (cli *CLI) parseFlags(args []string) (*Config, bool, bool, bool, error) {
 // handleError outputs the given error's Error() to the errStream and returns
 // the given exit status.
 func (cli *CLI) handleError(err error, status int) int {
-	fmt.Fprintf(cli.errStream, "Consul Template returned errors:\n%s", err)
+	fmt.Fprintf(cli.errStream, "Consul Template returned errors:\n%s\n", err)
 	return status
 }
 
@@ -397,7 +465,7 @@ Usage: %s [options]
 
 Options:
 
-  -auth=<user[:pass]>
+  -auth=<username[:password]>
       Set the basic authentication username (and password)
 
   -config=<path>
@@ -411,7 +479,10 @@ Options:
       Consul Template are rendering a common template
 
   -dry
-      Dump generated templates to stdout
+      Print generated templates to stdout instead of rendering
+
+  -dump-signal=<signal>
+      Signal to listen to initiate a core dump and terminate the process
 
   -exec=<command>
       Enable exec mode to run as a supervisor-like process - the given command
@@ -430,6 +501,9 @@ Options:
   -exec-splay=<duration>
       Amount of time to wait before sending signals
 
+  -kill-signal=<signal>
+      Signal to listen to gracefully terminate the process
+
   -log-level=<level>
       Set the logging level - values are "debug", "info", "warn", and "err"
 
@@ -442,6 +516,9 @@ Options:
 
   -pid-file=<path>
       Path on disk to write the PID of the process
+
+  -reload-signal=<signal>
+      Signal to listen to reload configuration
 
   -retry=<duration>
       The amount of time to wait if Consul returns an error when communicating

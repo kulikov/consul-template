@@ -60,6 +60,17 @@ func TestNewRunner_initialize(t *testing.T) {
 		t.Errorf("expected %d to be %d", len(runner.templates), 3)
 	}
 
+	// Check maintain order
+	if runner.templates[0].Path != in1.Name() {
+		t.Errorf("expected %s to be %s", runner.templates[0].Path, in1.Name())
+	}
+	if runner.templates[1].Path != in2.Name() {
+		t.Errorf("expected %s to be %s", runner.templates[1].Path, in1.Name())
+	}
+	if runner.templates[2].Path != in3.Name() {
+		t.Errorf("expected %s to be %s", runner.templates[2].Path, in1.Name())
+	}
+
 	if runner.renderedTemplates == nil {
 		t.Errorf("expected %#v to be %#v", runner.renderedTemplates, nil)
 	}
@@ -1413,10 +1424,15 @@ done
 	doneCh := make(chan struct{}, 1)
 	go func() {
 		for {
-			if runner.child != nil {
+			runner.childLock.RLock()
+			child := runner.child
+			runner.childLock.RUnlock()
+
+			if child != nil {
 				close(doneCh)
 				return
 			}
+
 			time.Sleep(50 * time.Millisecond)
 		}
 	}()
@@ -1438,7 +1454,7 @@ done
 	consul.SetKV("foo", []byte("bar"))
 
 	// Check that the reload signal was sent.
-	test.WaitForFileContents(out.Name(), []byte("one\n"), t)
+	test.WaitForContents(t, 500*time.Millisecond, out.Name(), "one\n")
 
 	npid := runner.child.Pid()
 	if opid != npid {
@@ -1448,7 +1464,7 @@ done
 	// Kill the child to check that the kill signal is properly sent.
 	runner.child.Stop()
 
-	test.WaitForFileContents(out.Name(), []byte("one\ntwo\n"), t)
+	test.WaitForContents(t, 500*time.Millisecond, out.Name(), "one\ntwo\n")
 }
 
 func TestRunner_execRestart(t *testing.T) {
@@ -1503,7 +1519,11 @@ done
 	doneCh := make(chan struct{}, 1)
 	go func() {
 		for {
-			if runner.child != nil {
+			runner.childLock.RLock()
+			child := runner.child
+			runner.childLock.RUnlock()
+
+			if child != nil {
 				close(doneCh)
 				return
 			}

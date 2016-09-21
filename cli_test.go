@@ -51,6 +51,111 @@ func TestParseFlags_token(t *testing.T) {
 	}
 }
 
+func TestParseFlags_reloadSignal(t *testing.T) {
+	cli := NewCLI(ioutil.Discard, ioutil.Discard)
+	config, _, _, _, err := cli.parseFlags([]string{
+		"-reload-signal", "SIGHUP",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := syscall.SIGHUP
+	if config.ReloadSignal != expected {
+		t.Errorf("expected %#v to be %#v", config.ReloadSignal, expected)
+	}
+	if !config.WasSet("reload_signal") {
+		t.Errorf("expected reload_signal to be set")
+	}
+}
+
+func TestParseFlags_reloadSignal_empty(t *testing.T) {
+	cli := NewCLI(ioutil.Discard, ioutil.Discard)
+	config, _, _, _, err := cli.parseFlags([]string{
+		"-reload-signal", "",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if config.ReloadSignal != nil {
+		t.Errorf("expected %#v to be %#v", config.ReloadSignal, nil)
+	}
+	if !config.WasSet("reload_signal") {
+		t.Errorf("expected reload_signal to be set")
+	}
+}
+
+func TestParseFlags_dumpSignal(t *testing.T) {
+	cli := NewCLI(ioutil.Discard, ioutil.Discard)
+	config, _, _, _, err := cli.parseFlags([]string{
+		"-dump-signal", "SIGHUP",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := syscall.SIGHUP
+	if config.DumpSignal != expected {
+		t.Errorf("expected %#v to be %#v", config.DumpSignal, expected)
+	}
+	if !config.WasSet("dump_signal") {
+		t.Errorf("expected dump_signal to be set")
+	}
+}
+
+func TestParseFlags_dumpSignal_empty(t *testing.T) {
+	cli := NewCLI(ioutil.Discard, ioutil.Discard)
+	config, _, _, _, err := cli.parseFlags([]string{
+		"-dump-signal", "",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if config.DumpSignal != nil {
+		t.Errorf("expected %#v to be %#v", config.DumpSignal, nil)
+	}
+	if !config.WasSet("dump_signal") {
+		t.Errorf("expected dump_signal to be set")
+	}
+}
+
+func TestParseFlags_killSignal(t *testing.T) {
+	cli := NewCLI(ioutil.Discard, ioutil.Discard)
+	config, _, _, _, err := cli.parseFlags([]string{
+		"-kill-signal", "SIGHUP",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expected := syscall.SIGHUP
+	if config.KillSignal != expected {
+		t.Errorf("expected %#v to be %#v", config.KillSignal, expected)
+	}
+	if !config.WasSet("kill_signal") {
+		t.Errorf("expected kill_signal to be set")
+	}
+}
+
+func TestParseFlags_killSignal_empty(t *testing.T) {
+	cli := NewCLI(ioutil.Discard, ioutil.Discard)
+	config, _, _, _, err := cli.parseFlags([]string{
+		"-kill-signal", "",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if config.KillSignal != nil {
+		t.Errorf("expected %#v to be %#v", config.KillSignal, nil)
+	}
+	if !config.WasSet("kill_signal") {
+		t.Errorf("expected kill_signal to be set")
+	}
+}
+
 func TestParseFlags_authUsername(t *testing.T) {
 	cli := NewCLI(ioutil.Discard, ioutil.Discard)
 	config, _, _, _, err := cli.parseFlags([]string{
@@ -291,7 +396,7 @@ func TestParseFlags_configTemplates(t *testing.T) {
 		Wait:           &watch.Wait{},
 	}
 	if !reflect.DeepEqual(config.ConfigTemplates[0], expected) {
-		t.Errorf("expected %q to be %q", config.ConfigTemplates[0], expected)
+		t.Errorf("expected %#v to be %#v", config.ConfigTemplates[0], expected)
 	}
 }
 
@@ -683,6 +788,8 @@ func TestRun_parseError(t *testing.T) {
 }
 
 func TestRun_onceFlag(t *testing.T) {
+	t.Parallel()
+
 	consul := testutil.NewTestServerConfig(t, func(c *testutil.TestServerConfig) {
 		c.Stdout = ioutil.Discard
 		c.Stderr = ioutil.Discard
@@ -717,13 +824,15 @@ func TestRun_onceFlag(t *testing.T) {
 			t.Errorf("expected %d to eq %d", status, ExitCodeOK)
 			t.Errorf("out: %s", outStream.String())
 		}
-	case <-time.After(500 * time.Millisecond):
-		t.Errorf("expected exit, did not exit after 500ms")
+	case <-time.After(2 * time.Second):
+		t.Errorf("expected exit, did not exit after 2s")
 		t.Errorf("out: %s", outStream.String())
 	}
 }
 
 func TestReload_sighup(t *testing.T) {
+	t.Parallel()
+
 	template := test.CreateTempfile([]byte("initial value"), t)
 	defer test.DeleteTempfile(template, t)
 
@@ -744,11 +853,24 @@ func TestReload_sighup(t *testing.T) {
 	defer cli.stop()
 
 	// Ensure we have run at least once
-	test.WaitForFileContents(out.Name(), []byte("initial value"), t)
+	test.WaitForContents(t, 2*time.Second, out.Name(), "initial value")
 
 	newValue := []byte("new value")
 	ioutil.WriteFile(template.Name(), newValue, 0644)
 	syscall.Kill(syscall.Getpid(), syscall.SIGHUP)
 
-	test.WaitForFileContents(out.Name(), []byte("new value"), t)
+	test.WaitForContents(t, 2*time.Second, out.Name(), "new value")
+}
+
+func TestErr_exitStatus(t *testing.T) {
+	t.Parallel()
+
+	out := gatedio.NewByteBuffer()
+	cli := NewCLI(out, out)
+
+	args := []string{"", "-exec", "bash -c 'exit 123'"}
+	exit := cli.Run(args)
+	if exit != 123 {
+		t.Errorf("expected %d to be %d\n\n%s", exit, 123, out.String())
+	}
 }
