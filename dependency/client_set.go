@@ -2,15 +2,14 @@ package dependency
 
 import (
 	"crypto/tls"
-	"crypto/x509"
 	"fmt"
-	"io/ioutil"
 	"log"
 	"net/http"
 	"sync"
 
 	consulapi "github.com/hashicorp/consul/api"
 	"github.com/hashicorp/go-cleanhttp"
+	rootcerts "github.com/hashicorp/go-rootcerts"
 	vaultapi "github.com/hashicorp/vault/api"
 )
 
@@ -47,17 +46,22 @@ type CreateConsulClientInput struct {
 	SSLCert      string
 	SSLKey       string
 	SSLCACert    string
+	SSLCAPath    string
+	ServerName   string
 }
 
 // CreateVaultClientInput is used as input to the CreateVaultClient function.
 type CreateVaultClientInput struct {
-	Address    string
-	Token      string
-	SSLEnabled bool
-	SSLVerify  bool
-	SSLCert    string
-	SSLKey     string
-	SSLCACert  string
+	Address     string
+	Token       string
+	UnwrapToken bool
+	SSLEnabled  bool
+	SSLVerify   bool
+	SSLCert     string
+	SSLKey      string
+	SSLCACert   string
+	SSLCAPath   string
+	ServerName  string
 }
 
 // NewClientSet creates a new client set that is ready to accept clients.
@@ -119,21 +123,25 @@ func (c *ClientSet) CreateConsulClient(i *CreateConsulClientInput) error {
 		}
 
 		// Custom CA certificate
-		if i.SSLCACert != "" {
-			cacert, err := ioutil.ReadFile(i.SSLCACert)
-			if err != nil {
-				return fmt.Errorf("client set: consul: %s", err)
+		if i.SSLCACert != "" || i.SSLCAPath != "" {
+			rootConfig := &rootcerts.Config{
+				CAFile: i.SSLCACert,
+				CAPath: i.SSLCAPath,
 			}
-			caCertPool := x509.NewCertPool()
-			caCertPool.AppendCertsFromPEM(cacert)
-
-			tlsConfig.RootCAs = caCertPool
+			if err := rootcerts.ConfigureTLS(&tlsConfig, rootConfig); err != nil {
+				return fmt.Errorf("client set: consul configuring TLS failed: %s", err)
+			}
 		}
 
 		// Construct all the certificates now
 		tlsConfig.BuildNameToCertificate()
 
 		// SSL verification
+		if i.ServerName != "" {
+			tlsConfig.ServerName = i.ServerName
+			tlsConfig.InsecureSkipVerify = false
+			log.Printf("[DEBUG] (clients) using explicit consul TLS server host name: %s", tlsConfig.ServerName)
+		}
 		if !i.SSLVerify {
 			log.Printf("[WARN] (clients) disabling consul SSL verification")
 			tlsConfig.InsecureSkipVerify = true
@@ -197,21 +205,25 @@ func (c *ClientSet) CreateVaultClient(i *CreateVaultClientInput) error {
 		}
 
 		// Custom CA certificate
-		if i.SSLCACert != "" {
-			cacert, err := ioutil.ReadFile(i.SSLCACert)
-			if err != nil {
-				return fmt.Errorf("client set: vault: %s", err)
+		if i.SSLCACert != "" || i.SSLCAPath != "" {
+			rootConfig := &rootcerts.Config{
+				CAFile: i.SSLCACert,
+				CAPath: i.SSLCAPath,
 			}
-			caCertPool := x509.NewCertPool()
-			caCertPool.AppendCertsFromPEM(cacert)
-
-			tlsConfig.RootCAs = caCertPool
+			if err := rootcerts.ConfigureTLS(&tlsConfig, rootConfig); err != nil {
+				return fmt.Errorf("client set: vault configuring TLS failed: %s", err)
+			}
 		}
 
 		// Construct all the certificates now
 		tlsConfig.BuildNameToCertificate()
 
 		// SSL verification
+		if i.ServerName != "" {
+			tlsConfig.ServerName = i.ServerName
+			tlsConfig.InsecureSkipVerify = false
+			log.Printf("[DEBUG] (clients) using explicit vault TLS server host name: %s", tlsConfig.ServerName)
+		}
 		if !i.SSLVerify {
 			log.Printf("[WARN] (clients) disabling vault SSL verification")
 			tlsConfig.InsecureSkipVerify = true
@@ -234,6 +246,29 @@ func (c *ClientSet) CreateVaultClient(i *CreateVaultClientInput) error {
 	if i.Token != "" {
 		log.Printf("[DEBUG] (clients) setting vault token")
 		client.SetToken(i.Token)
+	}
+
+	// Check if we are unwrapping
+	if i.UnwrapToken {
+		log.Printf("[INFO] (clients) unwrapping vault token")
+		secret, err := client.Logical().Unwrap(i.Token)
+		if err != nil {
+			return fmt.Errorf("client set: vault unwrap: %s", err)
+		}
+
+		if secret == nil {
+			return fmt.Errorf("client set: vault unwrap: no secret")
+		}
+
+		if secret.Auth == nil {
+			return fmt.Errorf("client set: vault unwrap: no secret auth")
+		}
+
+		if secret.Auth.ClientToken == "" {
+			return fmt.Errorf("client set: vault unwrap: no token returned")
+		}
+
+		client.SetToken(secret.Auth.ClientToken)
 	}
 
 	// Save the data on ourselves

@@ -1,16 +1,14 @@
 Consul Template
 ===============
-[![Latest Version](http://img.shields.io/github/release/hashicorp/consul-template.svg?style=flat-square)][release]
 [![Build Status](http://img.shields.io/travis/hashicorp/consul-template.svg?style=flat-square)][travis]
 [![Go Documentation](http://img.shields.io/badge/go-documentation-blue.svg?style=flat-square)][godocs]
 
-[release]: https://github.com/hashicorp/consul-template/releases
 [travis]: https://travis-ci.org/hashicorp/consul-template
 [godocs]: https://godoc.org/github.com/hashicorp/consul-template
 
 This project provides a convenient way to populate values from [Consul][] into the file system using the `consul-template` daemon.
 
-The daemon `consul-template` queries a [Consul][] instance and updates any number of specified templates on the file system. As an added bonus, `consul-template` can optionally run arbitrary commands when the update process completes. See the [Examples](#examples) section for some scenarios where this functionality might prove useful.
+The daemon `consul-template` queries a [Consul][] instance and updates any number of specified templates on the file system. As an added bonus, `consul-template` can optionally run arbitrary commands when the update process completes. See the [Examples](https://github.com/hashicorp/consul-template/tree/master/examples) folder for some scenarios where this functionality might prove useful.
 
 **The documentation in this README corresponds to the master branch of Consul Template. It may contain unreleased features or different APIs than the most recently released version. Please see the Git tag that corresponds to your version of Consul Template for the proper documentation.**
 
@@ -174,6 +172,12 @@ vault {
   // This value can also be specified via the environment variable VAULT_TOKEN.
   token = "abcd1234"
 
+  // This tells Consul Template that the provided token is actually a wrapped
+  // token that should be unwrapped using Vault's cubbyhole response wrapping
+  // before being used. Please see Vault's cubbyhole response wrapping
+  // documentation for more information.
+  unwrap_token = true
+
   // This option tells Consul Template to automatically renew the Vault token
   // given. If you are unfamiliar with Vault's architecture, Vault requires
   // tokens be renewed at some regular interval or they will be revoked. Consul
@@ -184,7 +188,7 @@ vault {
   // Note that secrets specified in a template (using {{secret}} for example)
   // are always renewed, even if this option is set to false. This option only
   // applies to the top-level Vault token itself.
-  renew = true
+  renew_token = true
 
   // This section details the SSL options for connecting to the Vault server.
   // Please see the SSL options below for more information (they are the same).
@@ -226,6 +230,10 @@ ssl {
   // useful for self-signed certificates or for organizations using their own
   // internal certificate authority.
   ca_cert = "/path/to/ca"
+
+  // This is the path to a directory of PEM-encoded CA cert files. If both
+  // `ca_cert` and `ca_path` is specified, `ca_cert` is preferred.
+  ca_path = "path/to/certs/"
 }
 
 // This block defines the configuration for connecting to a syslog server for
@@ -297,13 +305,20 @@ exec {
 // It is also possible to configure templates via the CLI directly.
 template {
   // This is the source file on disk to use as the input template. This is often
-  // called the "Consul Template template". This option is required.
+  // called the "Consul Template template". This option is required if not using
+  // the `contents` option.
   source = "/path/on/disk/to/template.ctmpl"
 
   // This is the destination path on disk where the source template will render.
   // If the parent directories do not exist, Consul Template will attempt to
   // create them.
   destination = "/path/on/disk/where/template/will/render.txt"
+
+  // This option allows embedding the contents of a template in the configuration
+  // file rather then supplying the `source` path to the template file. This is
+  // useful for short templates. This option is mutually exclusive with the
+  // `source` option.
+  contents = "{{key_or_default \"service/redis/maxconns@east-aws\" \"5\"}}"
 
   // This is the optional command to run when the template is rendered. The
   // command will only run if the resulting template changes. The command must
@@ -386,7 +401,7 @@ Read and output the contents of a local file on disk. If the file cannot be read
 This example will out the entire contents of the file at `/path/to/local/file` into the template. Note: this does not process nested templates.
 
 ##### `key`
-Query Consul for the value at the given key. If the key cannot be converted to a string-like value, an error will occur. Keys are queried using the following syntax:
+Query Consul for the value at the given key. If the key cannot be converted to a string-like value, an error will occur. If the key does not exist, Consul Template will block until the key is present. To avoid blocking, see `key_or_default` or `key_exists`. Keys are queried using the following syntax:
 
 ```liquid
 {{key "service/redis/maxconns@east-aws"}}
@@ -400,15 +415,25 @@ The example above is querying Consul for the `service/redis/maxconns` in the eas
 
 The beauty of Consul is that the key-value structure is entirely up to you!
 
+##### `key_exists`
+Query Consul for the key. If the key exists, this function will return true, false otherwise. This function does not block if the key does not exist. This is useful for controlling flow:
+
+```liquid
+{{if key_exists "app/beta_active"}}
+  # ...
+{{else}}
+  # ...
+{{end}}
+```
+
 ##### `key_or_default`
-Query Consul for the value at the given key. If no key exists at the given path, the default value will be used instead. The existing constraints and usage for keys apply:
+Query Consul for the value at the given key. If no key exists at the given path, the default value will be used instead. Unlike `key`, this function will not block if the key does not exist. The existing constraints and usage for keys apply:
 
 ```liquid
 {{key_or_default "service/redis/maxconns@east-aws" "5"}}
 ```
 
-Please note that Consul Template uses a multi-phase evaluation. During the first phase of evaluation, Consul Template will have no data from Consul and thus will _always_ fall back to the default value. Subsequent reads from Consul will pull in the real value from Consul (if the key exists) on the next template pass. This is important because it means that Consul Template will never "block" the rendering of a template due to a missing key from a `key_or_default`. Even if the key exists, if Consul has not yet returned data for the key, the
-default value will be used instead.
+Please note that Consul Template uses a multi-phase evaluation. During the first phase of evaluation, Consul Template will have no data from Consul and thus will _always_ fall back to the default value. Subsequent reads from Consul will pull in the real value from Consul (if the key exists) on the next template pass. This is important because it means that Consul Template will never "block" the rendering of a template due to a missing key from a `key_or_default`. Even if the key exists, if Consul has not yet returned data for the key, the default value will be used instead.
 
 ##### `ls`
 Query Consul for all top-level key-value pairs at the given prefix. If any of the values cannot be converted to a string-like value, an error will occur:
@@ -1001,6 +1026,22 @@ Takes the argument as a string and converts it to titlecase.
 
 See Go's [strings.Title()](http://golang.org/pkg/strings/#Title) for more information.
 
+##### `toTOML`
+Takes the result from a `tree` or `ls` call and converts it into a TOML object.
+
+```liquid
+{{ tree "config" | explode | toTOML }}
+/*
+maxconns = "5"
+minconns = "2"
+
+[admin]
+  port = "1134"
+*/
+```
+
+Note: This functionality should be considered final. If you need to manipulate keys, combine values, or perform mutations, that should be done _outside_ of Consul. In order to keep the API scope limited, we likely will not accept Pull Requests that focus on customizing the `toTOML` functionality.
+
 ##### `toUpper`
 Takes the argument as a string and converts it to uppercase.
 
@@ -1160,8 +1201,23 @@ func main() {
 
 Caveats
 -------
-### Exec Mode
+### Once Mode
+In Once mode, Consul Template will wait for all dependencies to be rendered. If a template specifies a dependency (a request) that does not exist in Consul, once mode will wait until Consul returns data for that dependency. Please note that "returned data" and "empty data" are not mutually exclusive.
 
+When you query for all healthy services named "foo" (`{{ service "foo" }}`), you are asking Consul - "give me all the healthy services named foo". If there are no services named foo, the response is the empty array. This is also the same response if there are no _healthy_ services named foo.
+
+Consul template processes input templates multiple times, since the first result could impact later dependencies:
+
+```liquid
+{{ range services }}
+{{ range service .Name }}
+{{ end }}
+{{ end }}
+```
+
+In this example, we have to process the output of `services` before we can lookup each `service`, since the inner loops cannot be evaluated until the outer loop returns a response. Consul Template waits until it gets a response from Consul for all dependencies before rendering a template. It does not wait until that response is non-empty though.
+
+### Exec Mode
 As of version 0.16.0, Consul Template has the ability to maintain an arbitrary child process (similar to [envconsul](https://github.com/hashicorp/envconsul)). This mode is most beneficial when running Consul Template in a container or on a scheduler like [Nomad](https://www.nomadproject.io) or Kubernetes. When activated, Consul Template will spawn and manage the lifecycle of the child process.
 
 This mode is best-explained through example. Consider a simple application that reads a configuration file from disk and spawns a server from that configuration.
@@ -1280,189 +1336,6 @@ That is because, during the _first_ evaluation of the template, the `service` ke
 
 This will still add the dependency to the list of watches, but Go will not evaluate the inner-if, avoiding the out-of-index error.
 
-
-Examples
---------
-### HAProxy
-HAProxy is a very common load balancer. You can read more about the HAProxy configuration file syntax in the HAProxy documentation, but here is an example template for rendering an HAProxy configuration file with Consul Template:
-
-```liquid
-global
-    daemon
-    maxconn {{key "service/haproxy/maxconn"}}
-
-defaults
-    mode {{key "service/haproxy/mode"}}{{range ls "service/haproxy/timeouts"}}
-    timeout {{.Key}} {{.Value}}{{end}}
-
-listen http-in
-    bind *:8000{{range service "release.web"}}
-    server {{.Node}} {{.Address}}:{{.Port}}{{end}}
-```
-
-Save this file to disk as `haproxy.ctmpl` and  run the `consul-template` daemon:
-
-```shell
-$ consul-template \
-  -consul demo.consul.io \
-  -template haproxy.ctmpl:/etc/haproxy/haproxy.conf
-  -dry
-```
-
-Depending on the state of the demo Consul instance, you could see the following output:
-
-```text
-global
-    daemon
-    maxconn 4
-
-defaults
-    mode default
-    timeout 5
-
-listen http-in
-    bind *:8000
-    server nyc3-worker-2 104.131.109.224:80
-    server nyc3-worker-3 104.131.59.59:80
-    server nyc3-worker-1 104.131.86.92:80
-```
-
-For more information on how to save this result to disk or for the full list of functionality available inside a Consul template file, please consult the API documentation.
-
-### Varnish
-Varnish is an common caching engine that can also act as a proxy. You can read more about the Varnish configuration file syntax in the Varnish documentation, but here is an example template for rendering a Varnish configuration file with Consul Template:
-
-```liquid
-import directors;
-{{range service "consul"}}
-backend {{.Name}}_{{.ID}} {
-    .host = "{{.Address}}";
-    .port = "{{.Port}}";
-}{{end}}
-
-sub vcl_init {
-  new bar = directors.round_robin();
-{{range service "consul"}}
-  bar.add_backend({{.Name}}_{{.ID}});{{end}}
-}
-
-sub vcl_recv {
-  set req.backend_hint = bar.backend();
-}
-```
-
-Save this file to disk as `varnish.ctmpl` and  run the `consul-template` daemon:
-
-```shell
-$ consul-template \
-  -consul demo.consul.io \
-  -template varnish.ctmpl:/etc/varnish/varnish.conf \
-  -dry
-```
-
-You should see the following output:
-
-```text
-import directors;
-
-backend consul_consul {
-    .host = "104.131.109.106";
-    .port = "8300";"
-}
-
-sub vcl_init {
-  new bar = directors.round_robin();
-
-  bar.add_backend(consul_consul);
-}
-
-sub vcl_recv {
-  set req.backend_hint = bar.backend();
-}
-```
-
-### Apache httpd
-Apache httpd is a popular web server. You can read more about the Apache httpd configuration file syntax in the Apache httpd documentation, but here is an example template for rendering part of an Apache httpd configuration file that is responsible for configuring a reverse proxy with dynamic end points based on service tags with Consul Template:
-
-```liquid
-{{range $tag, $service := service "web" | byTag}}
-# "{{$tag}}" api providers.
-<Proxy balancer://{{$tag}}>
-{{range $service}}  BalancerMember http://{{.Address}}:{{.Port}}
-{{end}} ProxySet lbmethod=bybusyness
-</Proxy>
-Redirect permanent /api/{{$tag}} /api/{{$tag}}/
-ProxyPass /api/{{$tag}}/ balancer://{{$tag}}/
-ProxyPassReverse /api/{{$tag}}/ balancer://{{$tag}}/
-{{end}}
-```
-
-Just like the previous examples, save this file to disk and run the `consul-template` daemon:
-
-```shell
-$ consul-template \
-  -consul demo.consul.io \
-  -template httpd.ctmpl:/etc/httpd/sites-available/balancer.conf
-```
-
-You should see output similar to the following:
-
-```text
-# "frontend" api providers.
-<Proxy balancer://frontend>
-  BalancerMember http://104.131.109.106:8080
-  BalancerMember http://104.131.109.113:8081
-  ProxySet lbmethod=bybusyness
-</Proxy>
-Redirect permanent /api/frontend /api/frontend/
-ProxyPass /api/frontend/ balancer://frontend/
-ProxyPassReverse /api/frontend/ balancer://frontend/
-
-# "api" api providers.
-<Proxy balancer://api>
-  BalancerMember http://104.131.108.11:8500
-  ProxySet lbmethod=bybusyness
-</Proxy>
-Redirect permanent /api/api /api/api/
-ProxyPass /api/api/ balancer://api/
-ProxyPassReverse /api/api/ balancer://api/
-```
-
-### Querying all services
-As of Consul Template 0.6.0, it is possible to have a complex dependency graph with dependent services. As such, it is possible to query and watch all services in Consul:
-
-```liquid
-{{range services}}# {{.Name}}{{range service .Name}}
-{{.Address}}{{end}}
-
-{{end}}
-```
-
-Just like the previous examples, save this file to disk and run the `consul-template` daemon:
-
-```shell
-$ consul-template \
-  -consul demo.consul.io \
-  -template everything.ctmpl:/tmp/inventory
-```
-
-You should see output similar to the following:
-
-```text
-# consul
-104.131.121.232
-
-# redis
-104.131.86.92
-104.131.109.224
-104.131.59.59
-
-# web
-104.131.86.92
-104.131.109.224
-104.131.59.59
-```
-
 Running and Process Lifecycle
 -----------------------------
 While there are multiple ways to run Consul Template, the most common pattern is to run Consul Template as a system service. When Consul Template first starts, it reads any configuration files and templates from disk and loads them into memory. From that point forward, changes to the files on disk do not propagate to running process without a reload.
@@ -1519,27 +1392,31 @@ A: Configuration management tools are designed to be used in unison with Consul 
 
 Contributing
 ------------
-To build and install Consul Template locally, you will need a modern [Go][] (Go 1.5+) environment.
+To build and install Consul Template locally, you will need to install the Docker engine:
 
-First, clone the repo:
+- [Docker for Mac](https://docs.docker.com/engine/installation/mac/)
+- [Docker for Windows](https://docs.docker.com/engine/installation/windows/)
+- [Docker for Linux](https://docs.docker.com/engine/installation/linux/ubuntulinux/)
+
+Clone the repository:
 
 ```shell
 $ git clone https://github.com/hashicorp/consul-template.git
 ```
 
-Next, download/update all the dependencies:
-
-```shell
-$ make updatedeps
-```
-
-To compile the `consul-template` binary and run the test suite:
+To compile the `consul-template` binary for your local machine:
 
 ```shell
 $ make dev
 ```
 
 This will compile the `consul-template` binary into `bin/consul-template` as well as your `$GOPATH` and run the test suite.
+
+If you want to compile a specific binary, set `XC_OS` and `XC_ARCH` or run the following to generate all binaries:
+
+```shell
+$ make bin
+```
 
 If you just want to run the tests:
 
