@@ -16,7 +16,7 @@ const (
 	dcRe     = `(@(?P<dc>[[:word:]\.\-\_]+))?`
 	keyRe    = `/?(?P<key>[^@]+)`
 	filterRe = `(\|(?P<filter>[[:word:]\,]+))?`
-	nameRe   = `(?P<name>[[:word:]\-\_]+)`
+	nameRe   = `(?P<name>[[:word:]\-\_\/\.]+)`
 	nearRe   = `(~(?P<near>[[:word:]\.\-\_]+))?`
 	prefixRe = `/?(?P<prefix>[^@]+)`
 	tagRe    = `((?P<tag>[[:word:]\.\-\_]+)\.)?`
