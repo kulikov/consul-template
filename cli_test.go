@@ -1,754 +1,626 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io/ioutil"
+	"os"
 	"reflect"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/hashicorp/consul-template/config"
 	"github.com/hashicorp/consul-template/test"
-	"github.com/hashicorp/consul-template/watch"
 	"github.com/hashicorp/consul/testutil"
-	"github.com/hashicorp/go-gatedio"
 )
 
-func TestParseFlags_consul(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	config, _, _, _, err := cli.parseFlags([]string{
-		"-consul", "12.34.56.78",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	expected := "12.34.56.78"
-	if config.Consul != expected {
-		t.Errorf("expected %q to be %q", config.Consul, expected)
-	}
-	if !config.WasSet("consul") {
-		t.Errorf("expected consul to be set")
-	}
-}
-
-func TestParseFlags_token(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	config, _, _, _, err := cli.parseFlags([]string{
-		"-token", "abcd1234",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	expected := "abcd1234"
-	if config.Token != expected {
-		t.Errorf("expected %q to be %q", config.Token, expected)
-	}
-	if !config.WasSet("token") {
-		t.Errorf("expected token to be set")
-	}
-}
-
-func TestParseFlags_authUsername(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	config, _, _, _, err := cli.parseFlags([]string{
-		"-auth", "test",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if config.Auth.Enabled != true {
-		t.Errorf("expected auth to be enabled")
-	}
-	if !config.WasSet("auth.enabled") {
-		t.Errorf("expected auth.enabled to be set")
-	}
-
-	expected := "test"
-	if config.Auth.Username != expected {
-		t.Errorf("expected %v to be %v", config.Auth.Username, expected)
-	}
-	if !config.WasSet("auth.username") {
-		t.Errorf("expected auth.username to be set")
-	}
-}
-
-func TestParseFlags_authUsernamePassword(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	config, _, _, _, err := cli.parseFlags([]string{
-		"-auth", "test:test",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if config.Auth.Enabled != true {
-		t.Errorf("expected auth to be enabled")
-	}
-	if !config.WasSet("auth.enabled") {
-		t.Errorf("expected auth.enabled to be set")
-	}
-
-	expected := "test"
-	if config.Auth.Username != expected {
-		t.Errorf("expected %v to be %v", config.Auth.Username, expected)
-	}
-	if !config.WasSet("auth.username") {
-		t.Errorf("expected auth.username to be set")
-	}
-	if config.Auth.Password != expected {
-		t.Errorf("expected %v to be %v", config.Auth.Password, expected)
-	}
-	if !config.WasSet("auth.password") {
-		t.Errorf("expected auth.password to be set")
-	}
-}
-
-func TestParseFlags_SSL(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	config, _, _, _, err := cli.parseFlags([]string{
-		"-ssl",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	expected := true
-	if config.SSL.Enabled != expected {
-		t.Errorf("expected %v to be %v", config.SSL.Enabled, expected)
-	}
-	if !config.WasSet("ssl") {
-		t.Errorf("expected ssl to be set")
-	}
-	if !config.WasSet("ssl.enabled") {
-		t.Errorf("expected ssl.enabled to be set")
-	}
-}
-
-func TestParseFlags_noSSL(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	config, _, _, _, err := cli.parseFlags([]string{
-		"-ssl=false",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	expected := false
-	if config.SSL.Enabled != expected {
-		t.Errorf("expected %v to be %v", config.SSL.Enabled, expected)
-	}
-	if !config.WasSet("ssl") {
-		t.Errorf("expected ssl to be set")
-	}
-	if !config.WasSet("ssl.enabled") {
-		t.Errorf("expected ssl.enabled to be set")
-	}
-}
-
-func TestParseFlags_SSLVerify(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	config, _, _, _, err := cli.parseFlags([]string{
-		"-ssl-verify",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	expected := true
-	if config.SSL.Verify != expected {
-		t.Errorf("expected %v to be %v", config.SSL.Verify, expected)
-	}
-	if !config.WasSet("ssl") {
-		t.Errorf("expected ssl to be set")
-	}
-	if !config.WasSet("ssl.verify") {
-		t.Errorf("expected ssl.verify to be set")
-	}
-}
-
-func TestParseFlags_noSSLVerify(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	config, _, _, _, err := cli.parseFlags([]string{
-		"-ssl-verify=false",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	expected := false
-	if config.SSL.Verify != expected {
-		t.Errorf("expected %v to be %v", config.SSL.Verify, expected)
-	}
-	if !config.WasSet("ssl") {
-		t.Errorf("expected ssl to be set")
-	}
-	if !config.WasSet("ssl.verify") {
-		t.Errorf("expected ssl.verify to be set")
-	}
-}
-
-func TestParseFlags_SSLCert(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	config, _, _, _, err := cli.parseFlags([]string{
-		"-ssl-cert", "/path/to/c1.pem",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	expected := "/path/to/c1.pem"
-	if config.SSL.Cert != expected {
-		t.Errorf("expected %v to be %v", config.SSL.Cert, expected)
-	}
-	if !config.WasSet("ssl") {
-		t.Errorf("expected ssl to be set")
-	}
-	if !config.WasSet("ssl.cert") {
-		t.Errorf("expected ssl.cert to be set")
-	}
-}
-
-func TestParseFlags_SSLKey(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	config, _, _, _, err := cli.parseFlags([]string{
-		"-ssl-key", "/path/to/client-key.pem",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	expected := "/path/to/client-key.pem"
-	if config.SSL.Key != expected {
-		t.Errorf("expected %v to be %v", config.SSL.Key, expected)
-	}
-	if !config.WasSet("ssl") {
-		t.Errorf("expected ssl to be set")
-	}
-	if !config.WasSet("ssl.key") {
-		t.Errorf("expected ssl.key to be set")
-	}
-}
-
-func TestParseFlags_SSLCaCert(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	config, _, _, _, err := cli.parseFlags([]string{
-		"-ssl-ca-cert", "/path/to/c2.pem",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	expected := "/path/to/c2.pem"
-	if config.SSL.CaCert != expected {
-		t.Errorf("expected %v to be %v", config.SSL.CaCert, expected)
-	}
-	if !config.WasSet("ssl") {
-		t.Errorf("expected ssl to be set")
-	}
-	if !config.WasSet("ssl.ca_cert") {
-		t.Errorf("expected ssl.ca_cert to be set")
-	}
-}
-
-func TestParseFlags_maxStale(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	config, _, _, _, err := cli.parseFlags([]string{
-		"-max-stale", "10h",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	expected := 10 * time.Hour
-	if config.MaxStale != expected {
-		t.Errorf("expected %q to be %q", config.MaxStale, expected)
-	}
-}
-
-func TestParseFlags_configTemplates(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	config, _, _, _, err := cli.parseFlags([]string{
-		"-template", "in.ctmpl:out.txt:some command",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if len(config.ConfigTemplates) != 1 {
-		t.Fatal("expected 1 config template")
-	}
-
-	expected := &ConfigTemplate{
-		Source:         "in.ctmpl",
-		Destination:    "out.txt",
-		Command:        "some command",
-		CommandTimeout: defaultCommandTimeout,
-		Perms:          defaultFilePerms,
-		Wait:           &watch.Wait{},
-	}
-	if !reflect.DeepEqual(config.ConfigTemplates[0], expected) {
-		t.Errorf("expected %q to be %q", config.ConfigTemplates[0], expected)
-	}
-}
-
-func TestParseFlags_dedup(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	config, _, _, _, err := cli.parseFlags([]string{
-		"-dedup",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	expected := true
-	if config.Deduplicate.Enabled != expected {
-		t.Errorf("expected %v to be %v", config.Deduplicate.Enabled, expected)
-	}
-	if !config.WasSet("deduplicate") {
-		t.Errorf("expected deduplicate to be set")
-	}
-	if !config.WasSet("deduplicate.enabled") {
-		t.Errorf("expected deduplicate.enabled to be set")
-	}
-}
-
-func TestParseFlags_exec(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	config, _, _, _, err := cli.parseFlags([]string{
-		"-exec", "/bin/bar",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	expected := "/bin/bar"
-	if config.Exec.Command != "/bin/bar" {
-		t.Errorf("expected %v to be %v", config.Exec.Command, expected)
-	}
-	if !config.WasSet("exec") {
-		t.Errorf("expected exec to be set")
-	}
-	if !config.WasSet("exec.command") {
-		t.Errorf("expected exec.command to be set")
-	}
-}
-
-func TestParseFlags_execKillSignal(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	config, _, _, _, err := cli.parseFlags([]string{
-		"-exec-kill-signal", "SIGINT",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	expected := syscall.SIGINT
-	if config.Exec.KillSignal != expected {
-		t.Errorf("expected %v to be %v", config.Exec.KillSignal, expected)
-	}
-	if !config.WasSet("exec.kill_signal") {
-		t.Errorf("expected exec.kill_signal to be set")
-	}
-}
-
-func TestParseFlags_execKillTimeout(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	config, _, _, _, err := cli.parseFlags([]string{
-		"-exec-kill-timeout", "30s",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	expected := 30 * time.Second
-	if config.Exec.KillTimeout != expected {
-		t.Errorf("expected %v to be %v", config.Exec.KillTimeout, expected)
-	}
-	if !config.WasSet("exec.kill_timeout") {
-		t.Errorf("expected exec.kill_timeout to be set")
-	}
-}
-
-func TestParseFlags_execReloadSignal(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	config, _, _, _, err := cli.parseFlags([]string{
-		"-exec-reload-signal", "SIGUSR2",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	expected := syscall.SIGUSR2
-	if config.Exec.ReloadSignal != expected {
-		t.Errorf("expected %v to be %v", config.Exec.ReloadSignal, expected)
-	}
-	if !config.WasSet("exec.reload_signal") {
-		t.Errorf("expected exec.reload_signal to be set")
-	}
-}
-
-func TestParseFlags_execSplay(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	config, _, _, _, err := cli.parseFlags([]string{
-		"-exec-splay", "100ms",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	expected := 100 * time.Millisecond
-	if config.Exec.Splay != expected {
-		t.Errorf("expected %v to be %v", config.Exec.Splay, expected)
-	}
-	if !config.WasSet("exec.splay") {
-		t.Errorf("expected exec.splay to be set")
-	}
-}
-
-func TestParseFlags_syslog(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	config, _, _, _, err := cli.parseFlags([]string{
-		"-syslog",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	expected := true
-	if config.Syslog.Enabled != expected {
-		t.Errorf("expected %v to be %v", config.Syslog.Enabled, expected)
-	}
-	if !config.WasSet("syslog") {
-		t.Errorf("expected syslog to be set")
-	}
-	if !config.WasSet("syslog.enabled") {
-		t.Errorf("expected syslog.enabled to be set")
-	}
-}
-
-func TestParseFlags_syslogFacility(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	config, _, _, _, err := cli.parseFlags([]string{
-		"-syslog-facility", "LOCAL5",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	expected := "LOCAL5"
-	if config.Syslog.Facility != expected {
-		t.Errorf("expected %v to be %v", config.Syslog.Facility, expected)
-	}
-	if !config.WasSet("syslog.facility") {
-		t.Errorf("expected syslog.facility to be set")
-	}
-}
-
-func TestParseFlags_wait(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	config, _, _, _, err := cli.parseFlags([]string{
-		"-wait", "10h:11h",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	expected := &watch.Wait{
-		Min: 10 * time.Hour,
-		Max: 11 * time.Hour,
-	}
-	if !reflect.DeepEqual(config.Wait, expected) {
-		t.Errorf("expected %v to be %v", config.Wait, expected)
-	}
-	if !config.WasSet("wait") {
-		t.Errorf("expected wait to be set")
-	}
-}
-
-func TestParseFlags_waitError(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	_, _, _, _, err := cli.parseFlags([]string{
-		"-wait", "watermelon:bacon",
-	})
-	if err == nil {
-		t.Fatal("expected error, but nothing was returned")
-	}
-
-	expected := "invalid value"
-	if !strings.Contains(err.Error(), expected) {
-		t.Errorf("expected %q to contain %q", err.Error(), expected)
-	}
-}
-
-func TestParseFlags_config(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	config, _, _, _, err := cli.parseFlags([]string{
-		"-config", "/path/to/file",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	expected := "/path/to/file"
-	if config.Path != expected {
-		t.Errorf("expected %v to be %v", config.Path, expected)
-	}
-	if !config.WasSet("path") {
-		t.Errorf("expected path to be set")
-	}
-}
-
-func TestParseFlags_retry(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	config, _, _, _, err := cli.parseFlags([]string{
-		"-retry", "10h",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	expected := 10 * time.Hour
-	if config.Retry != expected {
-		t.Errorf("expected %v to be %v", config.Retry, expected)
-	}
-	if !config.WasSet("retry") {
-		t.Errorf("expected retry to be set")
-	}
-}
-
-func TestParseFlags_logLevel(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	config, _, _, _, err := cli.parseFlags([]string{
-		"-log-level", "debug",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	expected := "debug"
-	if config.LogLevel != expected {
-		t.Errorf("expected %v to be %v", config.LogLevel, expected)
-	}
-	if !config.WasSet("log_level") {
-		t.Errorf("expected log_level to be set")
-	}
-}
-
-func TestParseFlags_pidFile(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	config, _, _, _, err := cli.parseFlags([]string{
-		"-pid-file", "/path/to/pid",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	expected := "/path/to/pid"
-	if config.PidFile != expected {
-		t.Errorf("expected %v to be %v", config.PidFile, expected)
-	}
-	if !config.WasSet("pid_file") {
-		t.Errorf("expected pid_file to be set")
-	}
-}
-
-func TestParseFlags_once(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	_, once, _, _, err := cli.parseFlags([]string{
-		"-once",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if once != true {
-		t.Errorf("expected once to be true")
-	}
-}
-
-func TestParseFlags_dry(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	_, _, dry, _, err := cli.parseFlags([]string{
-		"-dry",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if dry != true {
-		t.Errorf("expected dry to be true")
-	}
-}
-
-func TestParseFlags_version(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	_, _, _, version, err := cli.parseFlags([]string{
-		"-version",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if version != true {
-		t.Errorf("expected version to be true")
-	}
-}
-
-func TestParseFlags_v(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	_, _, _, version, err := cli.parseFlags([]string{
-		"-v",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if version != true {
-		t.Errorf("expected version to be true")
-	}
-}
-
-func TestParseFlags_errors(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	_, _, _, _, err := cli.parseFlags([]string{
-		"-totally", "-not", "-valid",
-	})
-
-	if err == nil {
-		t.Fatal("expected error, but nothing was returned")
-	}
-}
-
-func TestParseFlags_badArgs(t *testing.T) {
-	cli := NewCLI(ioutil.Discard, ioutil.Discard)
-	_, _, _, _, err := cli.parseFlags([]string{
-		"foo", "bar",
-	})
-
-	if err == nil {
-		t.Fatal("expected error, but nothing was returned")
-	}
-}
-
-func TestRun_printsErrors(t *testing.T) {
-	outStream, errStream := gatedio.NewByteBuffer(), gatedio.NewByteBuffer()
-	cli := NewCLI(outStream, errStream)
-	args := strings.Split("consul-template -bacon delicious", " ")
-
-	status := cli.Run(args)
-	if status == ExitCodeOK {
-		t.Fatal("expected not OK exit code")
-	}
-
-	expected := "flag provided but not defined: -bacon"
-	if !strings.Contains(errStream.String(), expected) {
-		t.Errorf("expected %q to eq %q", errStream.String(), expected)
-	}
-}
-
-func TestRun_versionFlag(t *testing.T) {
-	outStream, errStream := gatedio.NewByteBuffer(), gatedio.NewByteBuffer()
-	cli := NewCLI(outStream, errStream)
-	args := strings.Split("consul-template -version", " ")
-
-	status := cli.Run(args)
-	if status != ExitCodeOK {
-		t.Errorf("expected %q to eq %q", status, ExitCodeOK)
-	}
-
-	expected := fmt.Sprintf("consul-template v%s", Version)
-	if !strings.Contains(errStream.String(), expected) {
-		t.Errorf("expected %q to eq %q", errStream.String(), expected)
-	}
-}
-
-func TestRun_parseError(t *testing.T) {
-	outStream, errStream := gatedio.NewByteBuffer(), gatedio.NewByteBuffer()
-	cli := NewCLI(outStream, errStream)
-	args := strings.Split("consul-template -bacon delicious", " ")
-
-	status := cli.Run(args)
-	if status != ExitCodeParseFlagsError {
-		t.Errorf("expected %q to eq %q", status, ExitCodeParseFlagsError)
-	}
-
-	expected := "flag provided but not defined: -bacon"
-	if !strings.Contains(errStream.String(), expected) {
-		t.Fatalf("expected %q to contain %q", errStream.String(), expected)
-	}
-}
-
-func TestRun_onceFlag(t *testing.T) {
-	consul := testutil.NewTestServerConfig(t, func(c *testutil.TestServerConfig) {
+func testConsulServer(t *testing.T) *testutil.TestServer {
+	return testutil.NewTestServerConfig(t, func(c *testutil.TestServerConfig) {
 		c.Stdout = ioutil.Discard
 		c.Stderr = ioutil.Discard
 	})
-	defer consul.Stop()
+}
 
-	consul.SetKV("foo", []byte("bar"))
+func TestCLI_ParseFlags(t *testing.T) {
+	t.Parallel()
 
-	template := test.CreateTempfile([]byte(`
-	{{key "foo"}}
-  `), t)
-	defer test.DeleteTempfile(template, t)
+	f, err := ioutil.TempFile("", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
 
-	out := test.CreateTempfile(nil, t)
-	defer test.DeleteTempfile(out, t)
+	cases := []struct {
+		name string
+		f    []string
+		e    *config.Config
+		err  bool
+	}{
+		{
+			"auth_empty",
+			[]string{"-auth", ""},
+			nil,
+			true,
+		},
+		{
+			"auth_username",
+			[]string{"-auth", "username"},
+			&config.Config{
+				Auth: &config.AuthConfig{
+					Username: config.String("username"),
+				},
+			},
+			false,
+		},
+		{
+			"auth_username_password",
+			[]string{"-auth", "username:password"},
+			&config.Config{
+				Auth: &config.AuthConfig{
+					Username: config.String("username"),
+					Password: config.String("password"),
+				},
+			},
+			false,
+		},
+		{
+			"config",
+			[]string{"-config", f.Name()},
+			&config.Config{},
+			false,
+		},
+		{
+			"config_bad_path",
+			[]string{"-config", "/not/a/real/path"},
+			nil,
+			true,
+		},
+		{
+			"consul",
+			[]string{"-consul", "1.2.3.4"},
+			&config.Config{
+				Consul: config.String("1.2.3.4"),
+			},
+			false,
+		},
+		{
+			"dedup",
+			[]string{"-dedup"},
+			&config.Config{
+				Dedup: &config.DedupConfig{
+					Enabled: config.Bool(true),
+				},
+			},
+			false,
+		},
+		{
+			"exec",
+			[]string{"-exec", "command"},
+			&config.Config{
+				Exec: &config.ExecConfig{
+					Enabled: config.Bool(true),
+					Command: config.String("command"),
+				},
+			},
+			false,
+		},
+		{
+			"exec-kill-signal",
+			[]string{"-exec-kill-signal", "SIGUSR1"},
+			&config.Config{
+				Exec: &config.ExecConfig{
+					KillSignal: config.Signal(syscall.SIGUSR1),
+				},
+			},
+			false,
+		},
+		{
+			"exec-kill-timeout",
+			[]string{"-exec-kill-timeout", "10s"},
+			&config.Config{
+				Exec: &config.ExecConfig{
+					KillTimeout: config.TimeDuration(10 * time.Second),
+				},
+			},
+			false,
+		},
+		{
+			"exec-reload-signal",
+			[]string{"-exec-reload-signal", "SIGUSR1"},
+			&config.Config{
+				Exec: &config.ExecConfig{
+					ReloadSignal: config.Signal(syscall.SIGUSR1),
+				},
+			},
+			false,
+		},
+		{
+			"exec-splay",
+			[]string{"-exec-splay", "10s"},
+			&config.Config{
+				Exec: &config.ExecConfig{
+					Splay: config.TimeDuration(10 * time.Second),
+				},
+			},
+			false,
+		},
+		{
+			"kill-signal",
+			[]string{"-kill-signal", "SIGUSR1"},
+			&config.Config{
+				KillSignal: config.Signal(syscall.SIGUSR1),
+			},
+			false,
+		},
+		{
+			"log-level",
+			[]string{"-log-level", "DEBUG"},
+			&config.Config{
+				LogLevel: config.String("DEBUG"),
+			},
+			false,
+		},
+		{
+			"max-stale",
+			[]string{"-max-stale", "10s"},
+			&config.Config{
+				MaxStale: config.TimeDuration(10 * time.Second),
+			},
+			false,
+		},
+		{
+			"pid-file",
+			[]string{"-pid-file", "/var/pid/file"},
+			&config.Config{
+				PidFile: config.String("/var/pid/file"),
+			},
+			false,
+		},
+		{
+			"reload-signal",
+			[]string{"-reload-signal", "SIGUSR1"},
+			&config.Config{
+				ReloadSignal: config.Signal(syscall.SIGUSR1),
+			},
+			false,
+		},
+		{
+			"retry",
+			[]string{"-retry", "30s"},
+			&config.Config{
+				Retry: config.TimeDuration(30 * time.Second),
+			},
+			false,
+		},
+		{
+			"ssl",
+			[]string{"-ssl"},
+			&config.Config{
+				SSL: &config.SSLConfig{
+					Enabled: config.Bool(true),
+				},
+			},
+			false,
+		},
+		{
+			"ssl-ca-cert",
+			[]string{"-ssl-ca-cert", "ca_cert"},
+			&config.Config{
+				SSL: &config.SSLConfig{
+					CaCert: config.String("ca_cert"),
+				},
+			},
+			false,
+		},
+		{
+			"ssl-ca-path",
+			[]string{"-ssl-ca-path", "ca_path"},
+			&config.Config{
+				SSL: &config.SSLConfig{
+					CaPath: config.String("ca_path"),
+				},
+			},
+			false,
+		},
+		{
+			"ssl-cert",
+			[]string{"-ssl-cert", "cert"},
+			&config.Config{
+				SSL: &config.SSLConfig{
+					Cert: config.String("cert"),
+				},
+			},
+			false,
+		},
+		{
+			"ssl-key",
+			[]string{"-ssl-key", "key"},
+			&config.Config{
+				SSL: &config.SSLConfig{
+					Key: config.String("key"),
+				},
+			},
+			false,
+		},
+		{
+			"ssl-server-name",
+			[]string{"-ssl-server-name", "server_name"},
+			&config.Config{
+				SSL: &config.SSLConfig{
+					ServerName: config.String("server_name"),
+				},
+			},
+			false,
+		},
+		{
+			"ssl-verify",
+			[]string{"-ssl-verify"},
+			&config.Config{
+				SSL: &config.SSLConfig{
+					Verify: config.Bool(true),
+				},
+			},
+			false,
+		},
+		{
+			"syslog",
+			[]string{"-syslog"},
+			&config.Config{
+				Syslog: &config.SyslogConfig{
+					Enabled: config.Bool(true),
+				},
+			},
+			false,
+		},
+		{
+			"syslog-facility",
+			[]string{"-syslog-facility", "LOCAL0"},
+			&config.Config{
+				Syslog: &config.SyslogConfig{
+					Facility: config.String("LOCAL0"),
+				},
+			},
+			false,
+		},
+		{
+			"template",
+			[]string{"-template", "/tmp/in.tpl"},
+			&config.Config{
+				Templates: &config.TemplateConfigs{
+					&config.TemplateConfig{
+						Source: config.String("/tmp/in.tpl"),
+					},
+				},
+			},
+			false,
+		},
+		{
+			"token",
+			[]string{"-token", "token"},
+			&config.Config{
+				Token: config.String("token"),
+			},
+			false,
+		},
+		{
+			"vault-addr",
+			[]string{"-vault-addr", "vault_addr"},
+			&config.Config{
+				Vault: &config.VaultConfig{
+					Address: config.String("vault_addr"),
+				},
+			},
+			false,
+		},
+		{
+			"vault-renew-token",
+			[]string{"-vault-renew-token"},
+			&config.Config{
+				Vault: &config.VaultConfig{
+					RenewToken: config.Bool(true),
+				},
+			},
+			false,
+		},
+		{
+			"vault-ssl",
+			[]string{"-vault-ssl"},
+			&config.Config{
+				Vault: &config.VaultConfig{
+					SSL: &config.SSLConfig{
+						Enabled: config.Bool(true),
+					},
+				},
+			},
+			false,
+		},
+		{
+			"vault-ssl-ca-cert",
+			[]string{"-vault-ssl-ca-cert", "ca_cert"},
+			&config.Config{
+				Vault: &config.VaultConfig{
+					SSL: &config.SSLConfig{
+						CaCert: config.String("ca_cert"),
+					},
+				},
+			},
+			false,
+		},
+		{
+			"vault-ssl-ca-path",
+			[]string{"-vault-ssl-ca-path", "ca_path"},
+			&config.Config{
+				Vault: &config.VaultConfig{
+					SSL: &config.SSLConfig{
+						CaPath: config.String("ca_path"),
+					},
+				},
+			},
+			false,
+		},
+		{
+			"vault-ssl-cert",
+			[]string{"-vault-ssl-cert", "cert"},
+			&config.Config{
+				Vault: &config.VaultConfig{
+					SSL: &config.SSLConfig{
+						Cert: config.String("cert"),
+					},
+				},
+			},
+			false,
+		},
+		{
+			"vault-ssl-key",
+			[]string{"-vault-ssl-key", "key"},
+			&config.Config{
+				Vault: &config.VaultConfig{
+					SSL: &config.SSLConfig{
+						Key: config.String("key"),
+					},
+				},
+			},
+			false,
+		},
+		{
+			"vault-ssl-server-name",
+			[]string{"-vault-ssl-server-name", "server_name"},
+			&config.Config{
+				Vault: &config.VaultConfig{
+					SSL: &config.SSLConfig{
+						ServerName: config.String("server_name"),
+					},
+				},
+			},
+			false,
+		},
+		{
+			"vault-ssl-verify",
+			[]string{"-vault-ssl-verify"},
+			&config.Config{
+				Vault: &config.VaultConfig{
+					SSL: &config.SSLConfig{
+						Verify: config.Bool(true),
+					},
+				},
+			},
+			false,
+		},
+		{
+			"vault-token",
+			[]string{"-vault-token", "token"},
+			&config.Config{
+				Vault: &config.VaultConfig{
+					Token: config.String("token"),
+				},
+			},
+			false,
+		},
+		{
+			"vault-unwrap-token",
+			[]string{"-vault-unwrap-token"},
+			&config.Config{
+				Vault: &config.VaultConfig{
+					UnwrapToken: config.Bool(true),
+				},
+			},
+			false,
+		},
+		{
+			"wait_min",
+			[]string{"-wait", "10s"},
+			&config.Config{
+				Wait: &config.WaitConfig{
+					Min: config.TimeDuration(10 * time.Second),
+					Max: config.TimeDuration(40 * time.Second),
+				},
+			},
+			false,
+		},
+		{
+			"wait_min_max",
+			[]string{"-wait", "10s:30s"},
+			&config.Config{
+				Wait: &config.WaitConfig{
+					Min: config.TimeDuration(10 * time.Second),
+					Max: config.TimeDuration(30 * time.Second),
+				},
+			},
+			false,
+		},
+	}
 
-	outStream := gatedio.NewByteBuffer()
-	cli := NewCLI(outStream, outStream)
+	for i, tc := range cases {
+		t.Run(fmt.Sprintf("%d_%s", i, tc.name), func(t *testing.T) {
+			var out bytes.Buffer
+			cli := NewCLI(&out, &out)
 
-	command := fmt.Sprintf("consul-template -consul %s -template %s:%s -once -log-level debug",
-		consul.HTTPAddr, template.Name(), out.Name())
-	args := strings.Split(command, " ")
+			a, _, _, _, err := cli.ParseFlags(tc.f)
+			if (err != nil) != tc.err {
+				t.Fatal(err)
+			}
 
-	ch := make(chan int, 1)
-	go func() {
-		ch <- cli.Run(args)
-	}()
-
-	select {
-	case status := <-ch:
-		if status != ExitCodeOK {
-			t.Errorf("expected %d to eq %d", status, ExitCodeOK)
-			t.Errorf("out: %s", outStream.String())
-		}
-	case <-time.After(500 * time.Millisecond):
-		t.Errorf("expected exit, did not exit after 500ms")
-		t.Errorf("out: %s", outStream.String())
+			if tc.e != nil {
+				tc.e = config.DefaultConfig().Merge(tc.e)
+				tc.e.Finalize()
+			}
+			if !reflect.DeepEqual(tc.e, a) {
+				t.Errorf("\nexp: %#v\nact: %#v\nout: %q", tc.e, a, out.String())
+			}
+		})
 	}
 }
 
-func TestReload_sighup(t *testing.T) {
-	template := test.CreateTempfile([]byte("initial value"), t)
-	defer test.DeleteTempfile(template, t)
+func TestCLI_Run(t *testing.T) {
+	t.Parallel()
 
-	out := test.CreateTempfile(nil, t)
-	defer test.DeleteTempfile(out, t)
+	cases := []struct {
+		name string
+		args []string
+		f    func(*testing.T, int, string)
+	}{
+		{
+			"help",
+			[]string{"-h"},
+			func(t *testing.T, i int, s string) {
+				if i != 0 {
+					t.Error("expected 0 exit")
+				}
+			},
+		},
+		{
+			"version",
+			[]string{"-v"},
+			func(t *testing.T, i int, s string) {
+				if i != 0 {
+					t.Error("expected 0 exit")
+				}
+			},
+		},
+		{
+			"too_many_args",
+			[]string{"foo", "bar", "baz"},
+			func(t *testing.T, i int, s string) {
+				if i == 0 {
+					t.Error("expected error")
+				}
+				if !strings.Contains(s, "extra args") {
+					t.Errorf("\nexp: %q\nact: %q", "extra args", s)
+				}
+			},
+		},
+	}
 
-	outStream := gatedio.NewByteBuffer()
-	cli := NewCLI(outStream, outStream)
+	for i, tc := range cases {
+		t.Run(fmt.Sprintf("%d_%s", i, tc.name), func(t *testing.T) {
+			var out bytes.Buffer
+			cli := NewCLI(&out, &out)
 
-	command := fmt.Sprintf("consul-template -template %s:%s", template.Name(), out.Name())
-	args := strings.Split(command, " ")
+			tc.args = append([]string{"consul-template"}, tc.args...)
+			exit := cli.Run(tc.args)
+			tc.f(t, exit, out.String())
+		})
+	}
 
-	go func(args []string) {
-		if exit := cli.Run(args); exit != 0 {
-			t.Fatalf("bad exit code: %d", exit)
+	t.Run("once", func(t *testing.T) {
+		t.Parallel()
+
+		consul := testConsulServer(t)
+		defer consul.Stop()
+
+		var out bytes.Buffer
+
+		f, err := ioutil.TempFile("", "")
+		if err != nil {
+			t.Fatal(err)
 		}
-	}(args)
-	defer cli.stop()
+		defer os.Remove(f.Name())
+		if _, err := f.WriteString(`{{ key "once_foo" }}`); err != nil {
+			t.Fatal(err)
+		}
 
-	// Ensure we have run at least once
-	test.WaitForFileContents(out.Name(), []byte("initial value"), t)
+		cli := NewCLI(&out, &out)
 
-	newValue := []byte("new value")
-	ioutil.WriteFile(template.Name(), newValue, 0644)
-	syscall.Kill(syscall.Getpid(), syscall.SIGHUP)
+		ch := make(chan int, 1)
+		go func() {
+			ch <- cli.Run([]string{"consul-template",
+				"-once",
+				"-dry",
+				"-consul", consul.HTTPAddr,
+				"-template", f.Name(),
+			})
+		}()
 
-	test.WaitForFileContents(out.Name(), []byte("new value"), t)
+		consul.SetKV("once_foo", []byte("bar"))
+
+		select {
+		case status := <-ch:
+			if status != ExitCodeOK {
+				t.Errorf("\nexp: %#v\nact: %#v", status, ExitCodeOK)
+			}
+			if !strings.Contains("bar", out.String()) {
+				t.Errorf("\nexp: %#v\nact: %#v", "bar", out.String())
+			}
+		case <-time.After(2 * time.Second):
+			t.Errorf("timeout: %q", out.String())
+		}
+	})
+
+	t.Run("reload", func(t *testing.T) {
+		t.Parallel()
+
+		consul := testConsulServer(t)
+		defer consul.Stop()
+
+		var out bytes.Buffer
+
+		f, err := ioutil.TempFile("", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer os.Remove(f.Name())
+		if _, err := f.WriteString(`hello`); err != nil {
+			t.Fatal(err)
+		}
+
+		cli := NewCLI(&out, &out)
+		defer cli.stop()
+
+		ch := make(chan int, 1)
+		go func() {
+			ch <- cli.Run([]string{"consul-template",
+				"-dry",
+				"-consul", consul.HTTPAddr,
+				"-template", f.Name(),
+			})
+		}()
+
+		// Wait for the file to be available
+		test.WaitForContents(t, 2*time.Second, f.Name(), "hello")
+
+		// Write new contents, which wil not be picked up until a reload
+		if _, err := f.WriteString(`world`); err != nil {
+			t.Fatal(err)
+		}
+
+		// Trigger a reload
+		cli.signalCh <- syscall.SIGHUP
+
+		// Wait for the file contents
+		test.WaitForContents(t, 2*time.Second, f.Name(), "helloworld")
+
+		// We are done now
+		cli.stop()
+
+		select {
+		case status := <-ch:
+			if status != ExitCodeOK {
+				t.Errorf("\nexp: %#v\nact: %#v", status, ExitCodeOK)
+			}
+		case <-time.After(2 * time.Second):
+			t.Errorf("timeout: %q", out.String())
+		}
+	})
 }

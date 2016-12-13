@@ -11,6 +11,8 @@ import (
 	"github.com/hashicorp/go-gatedio"
 )
 
+const fileWaitSleepDelay = 500 * time.Millisecond
+
 func testChild(t *testing.T) *Child {
 	c, err := New(&NewInput{
 		Stdout:       ioutil.Discard,
@@ -19,7 +21,7 @@ func testChild(t *testing.T) *Child {
 		Args:         []string{"hello", "world"},
 		ReloadSignal: os.Interrupt,
 		KillSignal:   os.Kill,
-		KillTimeout:  10 * time.Millisecond,
+		KillTimeout:  2 * time.Second,
 		Splay:        0 * time.Second,
 	})
 	if err != nil {
@@ -36,10 +38,11 @@ func TestNew(t *testing.T) {
 	stderr := gatedio.NewByteBuffer()
 	command := "echo"
 	args := []string{"hello", "world"}
+	env := []string{"a=b", "c=d"}
 	reloadSignal := os.Interrupt
 	killSignal := os.Kill
-	killTimeout := 1 * time.Second
-	splay := 2 * time.Second
+	killTimeout := fileWaitSleepDelay
+	splay := fileWaitSleepDelay
 
 	c, err := New(&NewInput{
 		Stdin:        stdin,
@@ -47,6 +50,7 @@ func TestNew(t *testing.T) {
 		Stderr:       stderr,
 		Command:      command,
 		Args:         args,
+		Env:          env,
 		ReloadSignal: reloadSignal,
 		KillSignal:   killSignal,
 		KillTimeout:  killTimeout,
@@ -76,6 +80,10 @@ func TestNew(t *testing.T) {
 		t.Errorf("expected %q to be %q", c.args, args)
 	}
 
+	if !reflect.DeepEqual(c.env, env) {
+		t.Errorf("expected %q to be %q", c.env, env)
+	}
+
 	if c.reloadSignal != reloadSignal {
 		t.Errorf("expected %q to be %q", c.reloadSignal, reloadSignal)
 	}
@@ -93,7 +101,7 @@ func TestNew(t *testing.T) {
 	}
 
 	if c.stopCh == nil {
-		t.Errorf("expected %q to be", c.stopCh)
+		t.Errorf("expected %#v to be", c.stopCh)
 	}
 }
 
@@ -116,7 +124,7 @@ func TestExitCh_noProcess(t *testing.T) {
 	c := testChild(t)
 	ch := c.ExitCh()
 	if ch != nil {
-		t.Errorf("expected %q to be nil", ch)
+		t.Errorf("expected %#v to be nil", ch)
 	}
 }
 
@@ -173,6 +181,11 @@ func TestStart(t *testing.T) {
 	c.stdout = stdout
 	c.stderr = stderr
 
+	// Custom env and command
+	c.env = []string{"a=b", "c=d"}
+	c.command = "env"
+	c.args = nil
+
 	if err := c.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -180,11 +193,11 @@ func TestStart(t *testing.T) {
 
 	select {
 	case <-c.ExitCh():
-	case <-time.After(500 * time.Millisecond):
+	case <-time.After(fileWaitSleepDelay):
 		t.Fatal("process should have exited")
 	}
 
-	expected := "hello world\n"
+	expected := "a=b\nc=d\n"
 	if stdout.String() != expected {
 		t.Errorf("expected %q to be %q", stdout.String(), expected)
 	}
@@ -195,7 +208,7 @@ func TestSignal(t *testing.T) {
 
 	c := testChild(t)
 	c.command = "bash"
-	c.args = []string{"-c", "trap 'echo one' SIGUSR1; while true; do :; done"}
+	c.args = []string{"-c", "trap 'echo one; exit' SIGUSR1; while true; do sleep 0.2; done"}
 
 	out := gatedio.NewByteBuffer()
 	c.stdout, c.stderr = out, out
@@ -206,17 +219,14 @@ func TestSignal(t *testing.T) {
 	defer c.Stop()
 
 	// For some reason bash doesn't start immediately
-	time.Sleep(250 * time.Millisecond)
+	time.Sleep(fileWaitSleepDelay)
 
 	if err := c.Signal(syscall.SIGUSR1); err != nil {
 		t.Fatal(err)
 	}
 
 	// Give time for the file to flush
-	time.Sleep(250 * time.Millisecond)
-
-	// Stop the child now
-	c.Stop()
+	time.Sleep(fileWaitSleepDelay)
 
 	expected := "one\n"
 	if out.String() != expected {
@@ -239,7 +249,7 @@ func TestReload_signal(t *testing.T) {
 
 	c := testChild(t)
 	c.command = "bash"
-	c.args = []string{"-c", "trap 'echo one' SIGUSR1; while true; do :; done"}
+	c.args = []string{"-c", "trap 'echo one; exit' SIGUSR1; while true; do sleep 0.2; done"}
 	c.reloadSignal = syscall.SIGUSR1
 
 	out := gatedio.NewByteBuffer()
@@ -251,17 +261,14 @@ func TestReload_signal(t *testing.T) {
 	defer c.Stop()
 
 	// For some reason bash doesn't start immediately
-	time.Sleep(250 * time.Millisecond)
+	time.Sleep(fileWaitSleepDelay)
 
 	if err := c.Reload(); err != nil {
 		t.Fatal(err)
 	}
 
 	// Give time for the file to flush
-	time.Sleep(250 * time.Millisecond)
-
-	// Stop the child now
-	c.Stop()
+	time.Sleep(fileWaitSleepDelay)
 
 	expected := "one\n"
 	if out.String() != expected {
@@ -274,7 +281,8 @@ func TestReload_noSignal(t *testing.T) {
 
 	c := testChild(t)
 	c.command = "bash"
-	c.args = []string{"-c", "while true; do :; done"}
+	c.args = []string{"-c", "while true; do sleep 0.2; done"}
+	c.killTimeout = 10 * time.Millisecond
 	c.reloadSignal = nil
 
 	out := gatedio.NewByteBuffer()
@@ -286,7 +294,7 @@ func TestReload_noSignal(t *testing.T) {
 	defer c.Stop()
 
 	// For some reason bash doesn't start immediately
-	time.Sleep(250 * time.Millisecond)
+	time.Sleep(fileWaitSleepDelay)
 
 	// Grab the original pid
 	opid := c.cmd.Process.Pid
@@ -296,7 +304,7 @@ func TestReload_noSignal(t *testing.T) {
 	}
 
 	// Give time for the file to flush
-	time.Sleep(250 * time.Millisecond)
+	time.Sleep(fileWaitSleepDelay)
 
 	// Get the new pid
 	npid := c.cmd.Process.Pid
@@ -324,7 +332,7 @@ func TestKill_signal(t *testing.T) {
 
 	c := testChild(t)
 	c.command = "bash"
-	c.args = []string{"-c", "trap 'echo one' SIGUSR1; while true; do :; done"}
+	c.args = []string{"-c", "trap 'echo one; exit' SIGUSR1; while true; do sleep 0.2; done"}
 	c.killSignal = syscall.SIGUSR1
 
 	out := gatedio.NewByteBuffer()
@@ -336,15 +344,12 @@ func TestKill_signal(t *testing.T) {
 	defer c.Stop()
 
 	// For some reason bash doesn't start immediately
-	time.Sleep(250 * time.Millisecond)
+	time.Sleep(fileWaitSleepDelay)
 
 	c.Kill()
 
 	// Give time for the file to flush
-	time.Sleep(250 * time.Millisecond)
-
-	// Stop the child now
-	c.Stop()
+	time.Sleep(fileWaitSleepDelay)
 
 	expected := "one\n"
 	if out.String() != expected {
@@ -357,7 +362,8 @@ func TestKill_noSignal(t *testing.T) {
 
 	c := testChild(t)
 	c.command = "bash"
-	c.args = []string{"-c", "while true; do :; done"}
+	c.args = []string{"-c", "while true; do sleep 0.2; done"}
+	c.killTimeout = 20 * time.Millisecond
 	c.killSignal = nil
 
 	out := gatedio.NewByteBuffer()
@@ -369,12 +375,12 @@ func TestKill_noSignal(t *testing.T) {
 	defer c.Stop()
 
 	// For some reason bash doesn't start immediately
-	time.Sleep(250 * time.Millisecond)
+	time.Sleep(fileWaitSleepDelay)
 
 	c.Kill()
 
 	// Give time for the file to flush
-	time.Sleep(250 * time.Millisecond)
+	time.Sleep(fileWaitSleepDelay)
 
 	if c.cmd != nil {
 		t.Errorf("expected cmd to be nil")

@@ -1,21 +1,149 @@
 Consul Template Changelog
 =========================
 
-## v0.15.1.dev (Unreleased)
+## v0.18.0-rc1 (November 16, 2016)
+
+NEW FEATURES:
+
+  * Add new template function `keyExists` for determining if a key is present.
+      See the breaking change notice before for more information about the
+      motivation for this change.
+
+  * Add `scratch` for storing information across a template invocation. Scratch
+      is especially useful when saving a computed value to use it across a
+      template. Scratch values are not shared across multiple templates and are
+      not persisted between template invocations
+
+  * Add `executeTemplate` function for executing a defined template.
+
+BREAKING CHANGES:
+
+  * Consul Template now **blocks on `key` queries**. The previous behavior was
+      to always pass through, allowing users to use the existence of a key as
+      a source of control flow. This caused confusion among many users, so we
+      have restored the expected behavior of blocking on a `key` query, but have
+      added `keyExists` to check for the existence of a key. Note that the
+      `keyOrDefault` function remains unchanged and will not block if the value
+      is nil, as expected.
+
+  * The `vault` template function has been removed. This has been deprecated
+      with a warning since v0.14.0.
+
+  * A shell is no longer assumed for Template commands. Previous versions of
+      Consul Template assumed `/bin/sh` (`cmd` on Windows) as the parent
+      process for the template command. Due to user requests and a desire to
+      customize the shell, Consul Template no longer wraps the command in a
+      shell. For most commands, this change will be transparent. If you were
+      utilizing shell-specific functions like `&&`, `||`, or conditionals, you
+      will need to wrap you command in a shell, for example:
+
+    ```shell
+    -template "in.tpl:out.tpl:/bin/bash -c 'echo a || b'"
+    ```
+
+    or
+
+    ```hcl
+    template {
+      command = "/bin/bash -c 'echo a || b'"
+    }
+    ```
+
+DEPRECATIONS:
+
+  * `.Tags.Contains` is deprecated. Templates should make use of the built-in
+      `in` and `contains` functions instead. For example:
+
+    ```liquid
+    {{ if .Tags.Contains "foo" }}
+    ```
+
+    becomes:
+
+    ```liquid
+    {{ if .Tags | contains "foo" }}
+    ```
+
+    or:
+
+    ```liquid
+    {{ if "foo" | in .Tags }}
+    ```
+
+IMPROVEMENTS:
+
+  * Add CLI support for all SSL configuration options for both Consul and Vault.
+    Vault options are identical to Consul but with `vault-` prefix. Includes
+    the addition of `ssl-ca-path` to be consistent with file-based configuration
+    options.
+
+    * `ssl` `vault-ssl` (Enable)
+    * `ssl-verify` `vault-ssl-verify`
+    * `ssl-cert` `vault-ssl-cert`
+    * `ssl-key` `vault-ssl-key`
+    * `ssl-ca-cert` `vault-ssl-ca-cert`
+    * `ssl-ca-path` `vault-ssl-ca-path`
+    * `ssl-server-name` `vault-ssl-server-name`
+
+  * Add support for `server_name` option for TLS configurations to allow
+      specification of the expected certificate common name.
+  * Add `-vault-addr` CLI option for specifying the Vault server address
+      [GH-740, GH-747]
+  * Add tagged addresses to Node structs
+  * Add support for multiple `-config` flags [GH-773, GH-751]
+  * Add more control over template command execution
+
+BUG FIXES:
+
+  * Fix `-renew-token` flag not begin honored on the CLI [GH-741, GH-745]
+  * Allow `*` in key names [GH-789, GH-755]
+
+## v0.16.0 (September 22, 2016)
 
 NEW FEATURES:
 
   * **Exec Mode!** Consul Template can now act as a faux-supervisor for
       applications. Please see the [Exec Mode](README.md#exec-mode)
       documentation for more information.
+  * **Vault Token Unwrapping!** Consul Template can now unwrap Vault tokens that
+      have been wrapped using Vault's cubbyhole response wrapping. Simply add
+      the `unwrap_token` option to your Vault configuration stanza or pass in
+      the `-vault-unwrap-token` command line flag.
+
+BREAKING CHANGES:
+
+  * Consul Template no longer terminates on SIGTERM or SIGQUIT. Previous
+      versions were hard-coded to listen for SIGINT, SIGTERM, and SIGQUIT. This
+      value is now configurable, and the default is SIGINT. SIGQUIT will trigger
+      a core dump in accordance with similar programs. SIGTERM is no longer
+      listened.
+  * Consul Template now exits on irrecoverable Vault errors such as failing to
+      renew a token or lease.
+
+DEPRECATIONS:
+
+  * The `vault.renew` option has been renamed to `vault.renew_token` for added
+      clarity. This is backwards-compatible for this release, but will be
+      removed in a future release, so please update your configurations
+      accordingly.
 
 IMPROVEMENTS:
 
   * Permit commas in key prefix names [GH-669]
+  * Add configurable kill and reload signals [GH-686]
+  * Add a command line flag for controlling whether a provided Vault token will
+      be renewed [GH-718]
 
 BUG FIXES:
 
   * Allow variadic template function for `secret` [GH-660, GH-662]
+  * Always log in UTC time
+  * Log milliseconds [GH-676, GH-674]
+  * Maintain template ordering [GH-683]
+  * Add `Service` address to catalog node response [GH-687]
+  * Do not require trailing slashes [GH-706, GH-713]
+  * Wait for all existing dedup acquire attempts to finish [GH-716, GH-677]
+
 
 ## v0.15.0.dev (June 9, 2016)
 

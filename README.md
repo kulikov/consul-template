@@ -1,16 +1,14 @@
 Consul Template
 ===============
-[![Latest Version](http://img.shields.io/github/release/hashicorp/consul-template.svg?style=flat-square)][release]
 [![Build Status](http://img.shields.io/travis/hashicorp/consul-template.svg?style=flat-square)][travis]
 [![Go Documentation](http://img.shields.io/badge/go-documentation-blue.svg?style=flat-square)][godocs]
 
-[release]: https://github.com/hashicorp/consul-template/releases
 [travis]: https://travis-ci.org/hashicorp/consul-template
 [godocs]: https://godoc.org/github.com/hashicorp/consul-template
 
 This project provides a convenient way to populate values from [Consul][] into the file system using the `consul-template` daemon.
 
-The daemon `consul-template` queries a [Consul][] instance and updates any number of specified templates on the file system. As an added bonus, `consul-template` can optionally run arbitrary commands when the update process completes. See the [Examples](#examples) section for some scenarios where this functionality might prove useful.
+The daemon `consul-template` queries a [Consul][] instance and updates any number of specified templates on the file system. As an added bonus, `consul-template` can optionally run arbitrary commands when the update process completes. See the [Examples](https://github.com/hashicorp/consul-template/tree/master/examples) folder for some scenarios where this functionality might prove useful.
 
 **The documentation in this README corresponds to the master branch of Consul Template. It may contain unreleased features or different APIs than the most recently released version. Please see the Git tag that corresponds to your version of Consul Template for the proper documentation.**
 
@@ -23,35 +21,11 @@ You can download a released `consul-template` artifact from [the Consul Template
 Usage
 -----
 ### Options
-|       Option      | Description |
-| ----------------- |------------ |
-| `auth`            | The basic authentication username (and optional password), separated by a colon. There is no default value.
-| `config`          | The path to a configuration file or directory of configuration files on disk, relative to the current working directory. Values specified on the CLI take precedence over values specified in the configuration file. There is no default value.
-| `consul`*         | The location of the Consul instance to query (may be an IP address or FQDN) with port.
-| `deduplicate`     | Enable de-duplication of template rendering. If many instances of consul-template render the same template this reduces the load on Consul. Please see the "De-Duplication Mode" section in caveats for more information.
-| `dry`             | Dump generated templates to the console. If specified, generated templates are not committed to disk and commands are not invoked. _(CLI-only)_
-| `exec`            | Start the given command as a child process and proxy signals to that child. See [Exec mode](#exec-mode) below for more information.
-| `exec-kill-signal` | The signal to send to gracefully stop the child process.
-| `exec-kill-timeout` | The duration to wait before force-killing the child process.
-| `exec-reload-signal` | The signal to send to notify the child process that templates have changed. The default value is nil, which tells Consul Template to restart the child process instead of sending a reload signal.
-| `exec-splay` | Amount of time (random max) to wait before sending signals to the child process.
-| `log-level`       | The log level for output. This applies to the stdout/stderr logging as well as syslog logging (if enabled). Valid values are "debug", "info", "warn", and "err". The default value is "warn".
-| `max-stale`       | The maximum staleness of a query. If specified, Consul will distribute work among all servers instead of just the leader. The default value is 1s.
-| `once`            | Run Consul Template once and exit (as opposed to the default behavior of daemon). _(CLI-only)_
-| `pid-file`        | The path on disk to write Consul Template's PID file.
-| `retry`           | The amount of time to wait if Consul returns an error when communicating with the API. The default value is 5 seconds.
-| `ssl`             | Use HTTPS while talking to Consul. Requires the Consul server to be configured to serve secure connections. The default value is false.
-| `ssl-ca-cert`     | Path to a CA certificate file, containing one or more CA certificates to use to validate the certificate sent by the consul server to us. This is a handy alternative to setting ```--ssl-verify=false``` if you are using your own CA.
-| `ssl-cert`        | Path to an SSL client certificate to use to authenticate to the consul server. Useful if the consul server "verify_incoming" option is set.
-| `ssl-verify`      | Verify certificates when connecting via SSL. This requires the use of `-ssl`. The default value is true.
-| `syslog`          | Send log output to syslog (in addition to stdout and stderr). The default value is false.
-| `syslog-facility` | The facility to use when sending to syslog. This requires the use of `-syslog`. The default value is `LOCAL0`.
-| `template`*       | The input template, output path, and optional command separated by a colon (`:`). This option is additive and may be specified multiple times for multiple templates.
-| `token`           | The [Consul API token][Consul ACLs]. There is no default value.
-| `version`         | Output version information and quit. _(CLI-only)_
-| `wait`            | The `minimum(:maximum)` to wait before rendering a new template to disk and triggering a command, separated by a colon (`:`). If the optional maximum value is omitted, it is assumed to be 4x the required minimum value. This is a numeric time with a unit suffix ("5s"). There is no default value. Note that templates may override this setting with a template-specific wait using configuration files; this is described below.
+For the full list of options that correspond with your release, run:
 
-\* = Required parameter
+```shell
+consul-template -h
+```
 
 ### Command Line
 The CLI interface supports all of the options detailed above.
@@ -137,6 +111,28 @@ consul = "127.0.0.1:8500"
 // This option is also available via the environment variable CONSUL_TOKEN.
 token = "abcd1234"
 
+// This is the signal to listen for to trigger a reload event. The default
+// value is shown below. Setting this value to the empty string will cause CT
+// to not listen for any reload signals.
+reload_signal = "SIGHUP"
+
+// This is the signal to listen for to trigger a core dump event. The default
+// value is shown below. Setting this value to the empty string will cause CT
+// to not listen for any core dump signals.
+dump_signal = "SIGQUIT"
+
+// This is the signal to listen for to trigger a graceful stop. The default
+// value is shown below. Setting this value to the empty string will cause CT
+// to not listen for any graceful stop signals.
+kill_signal = "SIGINT"
+
+// This is customization around the environment in which template commands are
+// executed. See the "exec" block for more information on the specific
+// configuration options.
+env {
+  // ...
+}
+
 // This is the amount of time to wait before retrying a connection to Consul.
 // Consul Template is highly fault tolerant, meaning it does not exit in the
 // face of failure. Instead, it uses exponential back-off and retry functions to
@@ -166,7 +162,10 @@ pid_file = "/path/to/pid"
 // time to wait for the cluster to reach a consistent state before rendering a
 // template. This is useful to enable in systems that have a lot of flapping,
 // because it will reduce the the number of times a template is rendered.
-wait = "5s:10s"
+wait {
+  min = "5s"
+  max = "10s"
+}
 
 // This denotes the start of the configuration section for Vault. All values
 // contained in this section pertain to Vault.
@@ -183,6 +182,12 @@ vault {
   // This value can also be specified via the environment variable VAULT_TOKEN.
   token = "abcd1234"
 
+  // This tells Consul Template that the provided token is actually a wrapped
+  // token that should be unwrapped using Vault's cubbyhole response wrapping
+  // before being used. Please see Vault's cubbyhole response wrapping
+  // documentation for more information.
+  unwrap_token = true
+
   // This option tells Consul Template to automatically renew the Vault token
   // given. If you are unfamiliar with Vault's architecture, Vault requires
   // tokens be renewed at some regular interval or they will be revoked. Consul
@@ -193,7 +198,7 @@ vault {
   // Note that secrets specified in a template (using {{secret}} for example)
   // are always renewed, even if this option is set to false. This option only
   // applies to the top-level Vault token itself.
-  renew = true
+  renew_token = true
 
   // This section details the SSL options for connecting to the Vault server.
   // Please see the SSL options below for more information (they are the same).
@@ -235,6 +240,10 @@ ssl {
   // useful for self-signed certificates or for organizations using their own
   // internal certificate authority.
   ca_cert = "/path/to/ca"
+
+  // This is the path to a directory of PEM-encoded CA cert files. If both
+  // `ca_cert` and `ca_path` is specified, `ca_cert` is preferred.
+  ca_path = "path/to/certs/"
 }
 
 // This block defines the configuration for connecting to a syslog server for
@@ -278,6 +287,38 @@ exec {
   // herd problem on applications that do not gracefully reload.
   splay = "5s"
 
+  env {
+    // This specifies if the child process should not inherit the parent
+    // process's environment. By default, the child will have full access to the
+    // environment variables of the parent. Setting this to true will send only
+    // the values specified in `custom_env` to the child process.
+    pristine = false
+
+    // This specifies additional custom environment variables in the form shown
+    // below to inject into the child's runtime environment. If a custom
+    // environment variable shares its name with a system environment variable,
+    // the custom environment variable takes precedence. Even if pristine,
+    // whitelist, or blacklist is specified, all values in this option
+    // are given to the child process.
+    custom = ["PATH=$PATH:/etc/myapp/bin"]
+
+    // This specifies a list of environment variables to exclusively include in
+    // the list of environment variables exposed to the child process. If
+    // specified, only those environment variables matching the given patterns
+    // are exposed to the child process. These strings are matched using Go's
+    // glob function, so wildcards are permitted.
+    whitelist = ["CONSUL_*"]
+
+    // This specifies a list of environment variables to exclusively prohibit in
+    // the list of environment variables exposed to the child process. If
+    // specified, any environment variables matching the given patterns will not
+    // be exposed to the child process, even if they are whitelisted. The values
+    // in this option take precedence over the values in the whitelist.
+    // These strings are matched using Go's glob function, so wildcards are
+    // permitted.
+    blacklist = ["VAULT_*"]
+  }
+
   // This defines the signal that will be sent to the child process when a
   // change occurs in a watched template. The signal will only be sent after
   // the process is started, and the process will only be started after all
@@ -306,13 +347,20 @@ exec {
 // It is also possible to configure templates via the CLI directly.
 template {
   // This is the source file on disk to use as the input template. This is often
-  // called the "Consul Template template". This option is required.
+  // called the "Consul Template template". This option is required if not using
+  // the `contents` option.
   source = "/path/on/disk/to/template.ctmpl"
 
   // This is the destination path on disk where the source template will render.
   // If the parent directories do not exist, Consul Template will attempt to
   // create them.
   destination = "/path/on/disk/where/template/will/render.txt"
+
+  // This option allows embedding the contents of a template in the configuration
+  // file rather then supplying the `source` path to the template file. This is
+  // useful for short templates. This option is mutually exclusive with the
+  // `source` option.
+  contents = "{{ keyOrDefault \"service/redis/maxconns@east-aws\" \"5\" }}"
 
   // This is the optional command to run when the template is rendered. The
   // command will only run if the resulting template changes. The command must
@@ -348,7 +396,10 @@ template {
   // This is a numeric time with a unit suffix ("5s"). There is no default value.
   // The wait value for a template takes precedence over any globally-configured
   // wait.
-  wait = "2s:6s"
+  wait {
+    min = "2s"
+    max = "10s"
+  }
 }
 ```
 
@@ -395,7 +446,7 @@ Read and output the contents of a local file on disk. If the file cannot be read
 This example will out the entire contents of the file at `/path/to/local/file` into the template. Note: this does not process nested templates.
 
 ##### `key`
-Query Consul for the value at the given key. If the key cannot be converted to a string-like value, an error will occur. Keys are queried using the following syntax:
+Query Consul for the value at the given key. If the key cannot be converted to a string-like value, an error will occur. If the key does not exist, Consul Template will block until the key is present. To avoid blocking, see `keyOrDefault` or `keyExists`. Keys are queried using the following syntax:
 
 ```liquid
 {{key "service/redis/maxconns@east-aws"}}
@@ -409,15 +460,25 @@ The example above is querying Consul for the `service/redis/maxconns` in the eas
 
 The beauty of Consul is that the key-value structure is entirely up to you!
 
-##### `key_or_default`
-Query Consul for the value at the given key. If no key exists at the given path, the default value will be used instead. The existing constraints and usage for keys apply:
+##### `keyExists`
+Query Consul for the key. If the key exists, this function will return true, false otherwise. This function does not block if the key does not exist. This is useful for controlling flow:
 
 ```liquid
-{{key_or_default "service/redis/maxconns@east-aws" "5"}}
+{{if keyExists "app/beta_active"}}
+  # ...
+{{else}}
+  # ...
+{{end}}
 ```
 
-Please note that Consul Template uses a multi-phase evaluation. During the first phase of evaluation, Consul Template will have no data from Consul and thus will _always_ fall back to the default value. Subsequent reads from Consul will pull in the real value from Consul (if the key exists) on the next template pass. This is important because it means that Consul Template will never "block" the rendering of a template due to a missing key from a `key_or_default`. Even if the key exists, if Consul has not yet returned data for the key, the
-default value will be used instead.
+##### `keyOrDefault`
+Query Consul for the value at the given key. If no key exists at the given path, the default value will be used instead. Unlike `key`, this function will not block if the key does not exist. The existing constraints and usage for keys apply:
+
+```liquid
+{{keyOrDefault "service/redis/maxconns@east-aws" "5"}}
+```
+
+Please note that Consul Template uses a multi-phase evaluation. During the first phase of evaluation, Consul Template will have no data from Consul and thus will _always_ fall back to the default value. Subsequent reads from Consul will pull in the real value from Consul (if the key exists) on the next template pass. This is important because it means that Consul Template will never "block" the rendering of a template due to a missing key from a `keyOrDefault`. Even if the key exists, if Consul has not yet returned data for the key, the default value will be used instead.
 
 ##### `ls`
 Query Consul for all top-level key-value pairs at the given prefix. If any of the values cannot be converted to a string-like value, an error will occur:
@@ -509,7 +570,7 @@ If additional arguments are passed to the function, then the operation is assume
 The parameters must be `key=value` pairs, and each pair must be its own argument to the function:
 
 ```liquid
-{{ secret "path/" "a=b", "c=d", "e=f" }}
+{{ secret "path/" "a=b" "c=d" "e=f" }}
 ```
 
 Please always consider the security implications of having the contents of a secret in plain-text on disk. If an attacker is able to get access to the file, they will have access to plain-text secrets.
@@ -672,6 +733,76 @@ If you omit the data center attribute on `tree`, the local Consul data center wi
 
 - - -
 
+#### Scratch
+
+The scratchpad (or "scratch" for short) is available within the context of a template to store temporary data or computations. Scratch data is not shared between templates and is not cached between invocations.
+
+All scratch functions are prefixed with an underscore.
+
+##### `scratch.Key`
+
+Returns a boolean if data exists in the scratchpad at the named key. Even if the
+data at that key is "nil", this still returns true.
+
+```liquid
+{{ scratch.Key "foo" }}
+```
+
+##### `scratch.Get`
+
+Returns the value in the scratchpad at the named key. If the data does not
+exist, this will return "nil".
+
+```liquid
+{{ scratch.Key "foo" }}
+```
+
+##### `scratch.Set`
+
+Saves the given value at the given key. If data already exists at that key, it
+is overwritten.
+
+```liquid
+{{ scratch.Set "foo" "bar" }}
+```
+
+##### `scratch.SetX`
+
+This behaves exactly the same as `Set`, but does not overwrite if the value
+already exists.
+
+```liquid
+{{ scratch.SetX "foo" "bar" }}
+```
+
+##### `scratch.MapSet`
+
+Saves a value in a named key in the map. If data already exists at that key, it
+is overwritten.
+
+```liquid
+{{ scratch.MapSet "vars" "foo" "bar" }}
+```
+
+##### `scratch.MapSetX`
+
+This behaves exactly the same as `MapSet`, but does not overwrite if the value
+already exists.
+
+```liquid
+{{ scratch.MapSetX "vars" "foo" "bar" }}
+```
+
+##### `scratch.MapValues`
+
+Returns a sorted list (by key) of all values in the named map.
+
+```liquid
+{{ scratch.MapValues "vars" }}
+```
+
+- - -
+
 #### Helper Functions
 
 ##### `byKey`
@@ -731,6 +862,50 @@ Determines if a needle is within an iterable element.
 {{ end }}
 ```
 
+#### `containsAll`
+Returns `true` if all needles are within an iterable element,
+or `false` otherwise.
+Returns `true` if the list of needles is empty.
+
+```liquid
+{{ if containsAll $requiredTags .Tags }}
+# ...
+{{ end }}
+```
+
+#### `containsAny`
+Returns `true` if any needle is within an iterable element,
+or `false` otherwise.
+Returns `false` if the list of needles is empty.
+
+```liquid
+{{ if containsAny $acceptableTags .Tags }}
+# ...
+{{ end }}
+```
+
+#### `containsNone`
+Returns `true` if no needles are within an iterable element,
+or `false` otherwise.
+Returns `true` if the list of needles is empty.
+
+```liquid
+{{ if containsNone $forbiddenTags .Tags }}
+# ...
+{{ end }}
+```
+
+#### `containsNotall`
+Returns `true` if some needle is not within an iterable element,
+or `false` otherwise.
+Returns `false` if the list of needles is empty.
+
+```liquid
+{{ if containsNotall $excludingTags .Tags }}
+# ...
+{{ end }}
+```
+
 ##### `env`
 Reads the given environment variable accessible to the current process.
 
@@ -742,6 +917,25 @@ This function can be chained to manipulate the output:
 
 ```liquid
 {{env "CLUSTER_ID" | toLower}}
+```
+
+##### `executeTemplate`
+Executes and returns a defined template.
+
+```liquid
+{{define "custom"}}my custom template{{end}}
+
+This is my other template:
+{{executeTemplate "custom"}}
+
+And I can call it multiple times:
+{{executeTemplate "custom"}}
+
+Even with a new context:
+{{executeTemplate "custom" 42}}
+
+Or save it to a variable:
+{{$var := executeTemplate "custom"}}
 ```
 
 ##### `explode`
@@ -1010,6 +1204,22 @@ Takes the argument as a string and converts it to titlecase.
 
 See Go's [strings.Title()](http://golang.org/pkg/strings/#Title) for more information.
 
+##### `toTOML`
+Takes the result from a `tree` or `ls` call and converts it into a TOML object.
+
+```liquid
+{{ tree "config" | explode | toTOML }}
+/*
+maxconns = "5"
+minconns = "2"
+
+[admin]
+  port = "1134"
+*/
+```
+
+Note: This functionality should be considered final. If you need to manipulate keys, combine values, or perform mutations, that should be done _outside_ of Consul. In order to keep the API scope limited, we likely will not accept Pull Requests that focus on customizing the `toTOML` functionality.
+
 ##### `toUpper`
 Takes the argument as a string and converts it to uppercase.
 
@@ -1169,8 +1379,23 @@ func main() {
 
 Caveats
 -------
-### Exec Mode
+### Once Mode
+In Once mode, Consul Template will wait for all dependencies to be rendered. If a template specifies a dependency (a request) that does not exist in Consul, once mode will wait until Consul returns data for that dependency. Please note that "returned data" and "empty data" are not mutually exclusive.
 
+When you query for all healthy services named "foo" (`{{ service "foo" }}`), you are asking Consul - "give me all the healthy services named foo". If there are no services named foo, the response is the empty array. This is also the same response if there are no _healthy_ services named foo.
+
+Consul template processes input templates multiple times, since the first result could impact later dependencies:
+
+```liquid
+{{ range services }}
+{{ range service .Name }}
+{{ end }}
+{{ end }}
+```
+
+In this example, we have to process the output of `services` before we can lookup each `service`, since the inner loops cannot be evaluated until the outer loop returns a response. Consul Template waits until it gets a response from Consul for all dependencies before rendering a template. It does not wait until that response is non-empty though.
+
+### Exec Mode
 As of version 0.16.0, Consul Template has the ability to maintain an arbitrary child process (similar to [envconsul](https://github.com/hashicorp/envconsul)). This mode is most beneficial when running Consul Template in a container or on a scheduler like [Nomad](https://www.nomadproject.io) or Kubernetes. When activated, Consul Template will spawn and manage the lifecycle of the child process.
 
 This mode is best-explained through example. Consider a simple application that reads a configuration file from disk and spawns a server from that configuration.
@@ -1216,12 +1441,13 @@ There are some additional caveats with Exec Mode, which should be considered car
 - The exec command will only start after _all_ templates have been rendered at least once. One may have multiple templates for a single Consul Template process, all of which must be rendered before the process starts. Consider something like an nginx or apache configuration where both the process configuration file and individual site configuration must be written in order for the service to successfully start.
 - After the child process is started, any change to any dependent template will cause the reload signal to be sent to the child process. This reload signal defaults to nil, in which Consul Template will not kill and respawn the child. The reload signal can be specified and customized via the CLI or configuration file.
 - When Consul Template is stopped gracefully, it will send the configurable kill signal to the child process. The default value is SIGTERM, but it can be customized via the CLI or configuration file.
+- Consul Template will forward all signals it receives to the child process **except** its defined `reload_signal`, `dump_signal`, and `kill_signal`. If you disable these signals, Consul Template will forward them to the child process.
 - It is not possible to have more than one exec command (although each template can still have its own reload command).
 - Individual template reload commands still fire independently of the exec command.
 
 ### De-Duplication Mode
 
-Consul Template works by parsing templates to determine what data is needed and then watching Consul for any changes to that data. This allows Consul Template to efficiently re-render templates when a change occurs. However, if there are many instances of Consul Template rendering a common template there is a linear duplicaiton of work as each instance is querying the same data.
+Consul Template works by parsing templates to determine what data is needed and then watching Consul for any changes to that data. This allows Consul Template to efficiently re-render templates when a change occurs. However, if there are many instances of Consul Template rendering a common template there is a linear duplication of work as each instance is querying the same data.
 
 To make this pattern more efficient Consul Template supports work de-duplication across instances. This can be enabled with the `-dedup` flag or via the `deduplicate` configuration block. Once enabled, Consul Template uses [leader election](https://consul.io/docs/guides/leader-election.html) on a per-template basis to have only a single node perform the queries. Results are shared among other instances rendering the same template by passing compressed data through the Consul K/V store.
 
@@ -1288,189 +1514,6 @@ That is because, during the _first_ evaluation of the template, the `service` ke
 
 This will still add the dependency to the list of watches, but Go will not evaluate the inner-if, avoiding the out-of-index error.
 
-
-Examples
---------
-### HAProxy
-HAProxy is a very common load balancer. You can read more about the HAProxy configuration file syntax in the HAProxy documentation, but here is an example template for rendering an HAProxy configuration file with Consul Template:
-
-```liquid
-global
-    daemon
-    maxconn {{key "service/haproxy/maxconn"}}
-
-defaults
-    mode {{key "service/haproxy/mode"}}{{range ls "service/haproxy/timeouts"}}
-    timeout {{.Key}} {{.Value}}{{end}}
-
-listen http-in
-    bind *:8000{{range service "release.web"}}
-    server {{.Node}} {{.Address}}:{{.Port}}{{end}}
-```
-
-Save this file to disk as `haproxy.ctmpl` and  run the `consul-template` daemon:
-
-```shell
-$ consul-template \
-  -consul demo.consul.io \
-  -template haproxy.ctmpl:/etc/haproxy/haproxy.conf
-  -dry
-```
-
-Depending on the state of the demo Consul instance, you could see the following output:
-
-```text
-global
-    daemon
-    maxconn 4
-
-defaults
-    mode default
-    timeout 5
-
-listen http-in
-    bind *:8000
-    server nyc3-worker-2 104.131.109.224:80
-    server nyc3-worker-3 104.131.59.59:80
-    server nyc3-worker-1 104.131.86.92:80
-```
-
-For more information on how to save this result to disk or for the full list of functionality available inside a Consul template file, please consult the API documentation.
-
-### Varnish
-Varnish is an common caching engine that can also act as a proxy. You can read more about the Varnish configuration file syntax in the Varnish documentation, but here is an example template for rendering a Varnish configuration file with Consul Template:
-
-```liquid
-import directors;
-{{range service "consul"}}
-backend {{.Name}}_{{.ID}} {
-    .host = "{{.Address}}";
-    .port = "{{.Port}}";
-}{{end}}
-
-sub vcl_init {
-  new bar = directors.round_robin();
-{{range service "consul"}}
-  bar.add_backend({{.Name}}_{{.ID}});{{end}}
-}
-
-sub vcl_recv {
-  set req.backend_hint = bar.backend();
-}
-```
-
-Save this file to disk as `varnish.ctmpl` and  run the `consul-template` daemon:
-
-```shell
-$ consul-template \
-  -consul demo.consul.io \
-  -template varnish.ctmpl:/etc/varnish/varnish.conf \
-  -dry
-```
-
-You should see the following output:
-
-```text
-import directors;
-
-backend consul_consul {
-    .host = "104.131.109.106";
-    .port = "8300";"
-}
-
-sub vcl_init {
-  new bar = directors.round_robin();
-
-  bar.add_backend(consul_consul);
-}
-
-sub vcl_recv {
-  set req.backend_hint = bar.backend();
-}
-```
-
-### Apache httpd
-Apache httpd is a popular web server. You can read more about the Apache httpd configuration file syntax in the Apache httpd documentation, but here is an example template for rendering part of an Apache httpd configuration file that is responsible for configuring a reverse proxy with dynamic end points based on service tags with Consul Template:
-
-```liquid
-{{range $tag, $service := service "web" | byTag}}
-# "{{$tag}}" api providers.
-<Proxy balancer://{{$tag}}>
-{{range $service}}  BalancerMember http://{{.Address}}:{{.Port}}
-{{end}} ProxySet lbmethod=bybusyness
-</Proxy>
-Redirect permanent /api/{{$tag}} /api/{{$tag}}/
-ProxyPass /api/{{$tag}}/ balancer://{{$tag}}/
-ProxyPassReverse /api/{{$tag}}/ balancer://{{$tag}}/
-{{end}}
-```
-
-Just like the previous examples, save this file to disk and run the `consul-template` daemon:
-
-```shell
-$ consul-template \
-  -consul demo.consul.io \
-  -template httpd.ctmpl:/etc/httpd/sites-available/balancer.conf
-```
-
-You should see output similar to the following:
-
-```text
-# "frontend" api providers.
-<Proxy balancer://frontend>
-  BalancerMember http://104.131.109.106:8080
-  BalancerMember http://104.131.109.113:8081
-  ProxySet lbmethod=bybusyness
-</Proxy>
-Redirect permanent /api/frontend /api/frontend/
-ProxyPass /api/frontend/ balancer://frontend/
-ProxyPassReverse /api/frontend/ balancer://frontend/
-
-# "api" api providers.
-<Proxy balancer://api>
-  BalancerMember http://104.131.108.11:8500
-  ProxySet lbmethod=bybusyness
-</Proxy>
-Redirect permanent /api/api /api/api/
-ProxyPass /api/api/ balancer://api/
-ProxyPassReverse /api/api/ balancer://api/
-```
-
-### Querying all services
-As of Consul Template 0.6.0, it is possible to have a complex dependency graph with dependent services. As such, it is possible to query and watch all services in Consul:
-
-```liquid
-{{range services}}# {{.Name}}{{range service .Name}}
-{{.Address}}{{end}}
-
-{{end}}
-```
-
-Just like the previous examples, save this file to disk and run the `consul-template` daemon:
-
-```shell
-$ consul-template \
-  -consul demo.consul.io \
-  -template everything.ctmpl:/tmp/inventory
-```
-
-You should see output similar to the following:
-
-```text
-# consul
-104.131.121.232
-
-# redis
-104.131.86.92
-104.131.109.224
-104.131.59.59
-
-# web
-104.131.86.92
-104.131.109.224
-104.131.59.59
-```
-
 Running and Process Lifecycle
 -----------------------------
 While there are multiple ways to run Consul Template, the most common pattern is to run Consul Template as a system service. When Consul Template first starts, it reads any configuration files and templates from disk and loads them into memory. From that point forward, changes to the files on disk do not propagate to running process without a reload.
@@ -1527,27 +1570,31 @@ A: Configuration management tools are designed to be used in unison with Consul 
 
 Contributing
 ------------
-To build and install Consul Template locally, you will need a modern [Go][] (Go 1.5+) environment.
+To build and install Consul Template locally, you will need to install the Docker engine:
 
-First, clone the repo:
+- [Docker for Mac](https://docs.docker.com/engine/installation/mac/)
+- [Docker for Windows](https://docs.docker.com/engine/installation/windows/)
+- [Docker for Linux](https://docs.docker.com/engine/installation/linux/ubuntulinux/)
+
+Clone the repository:
 
 ```shell
 $ git clone https://github.com/hashicorp/consul-template.git
 ```
 
-Next, download/update all the dependencies:
-
-```shell
-$ make updatedeps
-```
-
-To compile the `consul-template` binary and run the test suite:
+To compile the `consul-template` binary for your local machine:
 
 ```shell
 $ make dev
 ```
 
 This will compile the `consul-template` binary into `bin/consul-template` as well as your `$GOPATH` and run the test suite.
+
+If you want to compile a specific binary, set `XC_OS` and `XC_ARCH` or run the following to generate all binaries:
+
+```shell
+$ make bin
+```
 
 If you just want to run the tests:
 
