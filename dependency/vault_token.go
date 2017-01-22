@@ -48,7 +48,7 @@ func (d *VaultTokenQuery) Fetch(clients *ClientSet, opts *QueryOptions) (interfa
 	if opts.WaitIndex != 0 && d.leaseDuration != 0 {
 		dur := time.Duration(d.leaseDuration/2.0) * time.Second
 		if dur == 0 {
-			dur = time.Duration(VaultDefaultLeaseDuration)
+			dur = VaultDefaultLeaseDuration
 		}
 
 		log.Printf("[TRACE] %s: long polling for %s", d, dur)
@@ -94,4 +94,9 @@ func (d *VaultTokenQuery) Stop() {
 // String returns the human-friendly version of this dependency.
 func (d *VaultTokenQuery) String() string {
 	return "vault.token"
+}
+
+// Type returns the type of this dependency.
+func (d *VaultTokenQuery) Type() Type {
+	return TypeVault
 }

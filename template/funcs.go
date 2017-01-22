@@ -2,10 +2,10 @@ package template
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"os"
 	"os/exec"
 	"reflect"
 	"regexp"
@@ -38,6 +38,40 @@ func datacentersFunc(b *Brain, used, missing *dep.Set) func() ([]string, error) 
 
 		if value, ok := b.Recall(d); ok {
 			return value.([]string), nil
+		}
+
+		missing.Add(d)
+
+		return result, nil
+	}
+}
+
+// envFunc returns a function which checks the value of an environment variable.
+// Invokers can specify their own environment, which takes precedences over any
+// real environment variables
+func envFunc(b *Brain, used, missing *dep.Set, overrides []string) func(string) (string, error) {
+	return func(s string) (string, error) {
+		var result string
+
+		d, err := dep.NewEnvQuery(s)
+		if err != nil {
+			return result, err
+		}
+
+		used.Add(d)
+
+		// Overrides lookup - we have to do this after adding the dependency,
+		// otherwise dedupe sharing won't work.
+		for _, e := range overrides {
+			split := strings.SplitN(e, "=", 2)
+			k, v := split[0], split[1]
+			if k == s {
+				return v, nil
+			}
+		}
+
+		if value, ok := b.Recall(d); ok {
+			return value.(string), nil
 		}
 
 		missing.Add(d)
@@ -252,17 +286,38 @@ func nodesFunc(b *Brain, used, missing *dep.Set) func(...string) ([]*dep.Node, e
 }
 
 // secretFunc returns or accumulates secret dependencies from Vault.
-func secretFunc(b *Brain, used, missing *dep.Set) func(string) (*dep.Secret, error) {
-	return func(s string) (*dep.Secret, error) {
-		result := &dep.Secret{}
+func secretFunc(b *Brain, used, missing *dep.Set) func(...string) (*dep.Secret, error) {
+	return func(s ...string) (*dep.Secret, error) {
+		var result *dep.Secret
 
 		if len(s) == 0 {
 			return result, nil
 		}
 
-		d, err := dep.NewVaultReadQuery(s)
+		// TODO: Refactor into separate template functions
+		path, rest := s[0], s[1:]
+		data := make(map[string]interface{})
+		for _, str := range rest {
+			parts := strings.SplitN(str, "=", 2)
+			if len(parts) != 2 {
+				return result, fmt.Errorf("not k=v pair %q", str)
+			}
+
+			k, v := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+			data[k] = v
+		}
+
+		var d dep.Dependency
+		var err error
+
+		if len(rest) == 0 {
+			d, err = dep.NewVaultReadQuery(path)
+		} else {
+			d, err = dep.NewVaultWriteQuery(path, data)
+		}
+
 		if err != nil {
-			return result, nil
+			return nil, err
 		}
 
 		used.Add(d)
@@ -281,7 +336,7 @@ func secretFunc(b *Brain, used, missing *dep.Set) func(string) (*dep.Secret, err
 // secretsFunc returns or accumulates a list of secret dependencies from Vault.
 func secretsFunc(b *Brain, used, missing *dep.Set) func(string) ([]string, error) {
 	return func(s string) ([]string, error) {
-		result := []string{}
+		var result []string
 
 		if len(s) == 0 {
 			return result, nil
@@ -289,7 +344,7 @@ func secretsFunc(b *Brain, used, missing *dep.Set) func(string) ([]string, error
 
 		d, err := dep.NewVaultListQuery(s)
 		if err != nil {
-			return result, nil
+			return nil, err
 		}
 
 		used.Add(d)
@@ -386,6 +441,35 @@ func treeFunc(b *Brain, used, missing *dep.Set) func(string) ([]*dep.KeyPair, er
 	}
 }
 
+// base64Decode decodes the given string as a base64 string, returning an error
+// if it fails.
+func base64Decode(s string) (string, error) {
+	v, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return "", errors.Wrap(err, "base64Decode")
+	}
+	return string(v), nil
+}
+
+// base64Encode encodes the given value into a string represented as base64.
+func base64Encode(s string) (string, error) {
+	return base64.StdEncoding.EncodeToString([]byte(s)), nil
+}
+
+// base64URLDecode decodes the given string as a URL-safe base64 string.
+func base64URLDecode(s string) (string, error) {
+	v, err := base64.URLEncoding.DecodeString(s)
+	if err != nil {
+		return "", errors.Wrap(err, "base64URLDecode")
+	}
+	return string(v), nil
+}
+
+// base64URLEncode encodes the given string to be URL-safe.
+func base64URLEncode(s string) (string, error) {
+	return base64.URLEncoding.EncodeToString([]byte(s)), nil
+}
+
 // byKey accepts a slice of KV pairs and returns a map of the top-level
 // key to all its subkeys. For example:
 //
@@ -475,34 +559,18 @@ func contains(v, l interface{}) (bool, error) {
 // 1. containsAll    - true if (∀x ∈ v then x ∈ l); false otherwise
 // 2. containsAny    - true if (∃x ∈ v such that x ∈ l); false otherwise
 // 3. containsNone   - true if (∀x ∈ v then x ∉ l); false otherwise
-// 2. containsNotall - true if (∃x ∈ v such that x ∉ l); false otherwise
+// 2. containsNotAll - true if (∃x ∈ v such that x ∉ l); false otherwise
 //
 // ret_true - return true at end of loop for none/all; false for any/notall
 // invert   - invert block test for all/notall
-func containsSomeFunc(ret_true, invert bool) func([]interface{}, interface{}) (bool, error) {
+func containsSomeFunc(retTrue, invert bool) func([]interface{}, interface{}) (bool, error) {
 	return func(v []interface{}, l interface{}) (bool, error) {
 		for i := 0; i < len(v); i++ {
 			if ok, _ := in(l, v[i]); ok != invert {
-				return !ret_true, nil
+				return !retTrue, nil
 			}
 		}
-		return ret_true, nil
-	}
-}
-
-// envFunc returns a function which checks the value of an environment variable.
-// Invokers can specify their own environment, which takes precedences over any
-// real environment variables
-func envFunc(env []string) func(string) (string, error) {
-	return func(s string) (string, error) {
-		for _, e := range env {
-			split := strings.SplitN(e, "=", 2)
-			k, v := split[0], split[1]
-			if k == s {
-				return v, nil
-			}
-		}
-		return os.Getenv(s), nil
+		return retTrue, nil
 	}
 }
 
@@ -532,10 +600,10 @@ func explodeHelper(m map[string]interface{}, k, v, p string) error {
 			return fmt.Errorf("not a map: %q: %q already has value %q", p, top, m[top])
 		}
 		return explodeHelper(nest, key, v, k)
-	} else {
-		if k != "" {
-			m[k] = v
-		}
+	}
+
+	if k != "" {
+		m[k] = v
 	}
 
 	return nil
@@ -741,14 +809,14 @@ func plugin(name string, args ...string) (string, error) {
 	}()
 
 	select {
-	case <-time.After(5 * time.Second):
+	case <-time.After(30 * time.Second):
 		if cmd.Process != nil {
 			if err := cmd.Process.Kill(); err != nil {
 				return "", fmt.Errorf("exec %q: failed to kill", name)
 			}
 		}
 		<-done // Allow the goroutine to exit
-		return "", fmt.Errorf("exec %q: did not finish", name)
+		return "", fmt.Errorf("exec %q: did not finishin 30s", name)
 	case err := <-done:
 		if err != nil {
 			return "", fmt.Errorf("exec %q: %s\n\nstdout:\n\n%s\n\nstderr:\n\n%s",

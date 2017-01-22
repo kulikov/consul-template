@@ -1,3 +1,4 @@
+dist: trusty
 sudo: false
 
 language: go
@@ -5,8 +6,21 @@ language: go
 go:
   - 1.7
 
+env:
+  - GOMAXPROCS=7
+
 branches:
   only:
     - master
 
-script: make test test-race
+env:
+  - CONSUL_VERSION=0.7.2
+
+before_install:
+  - curl -sLo consul.zip https://releases.hashicorp.com/consul/${CONSUL_VERSION}/consul_${CONSUL_VERSION}_linux_amd64.zip
+  - unzip consul.zip
+  - mkdir ~/bin
+  - mv consul ~/bin
+  - export PATH="~/bin:$PATH"
+
+script: make test-race

@@ -10,7 +10,13 @@ This project provides a convenient way to populate values from [Consul][] into t
 
 The daemon `consul-template` queries a [Consul][] instance and updates any number of specified templates on the file system. As an added bonus, `consul-template` can optionally run arbitrary commands when the update process completes. See the [Examples](https://github.com/hashicorp/consul-template/tree/master/examples) folder for some scenarios where this functionality might prove useful.
 
-**The documentation in this README corresponds to the master branch of Consul Template. It may contain unreleased features or different APIs than the most recently released version. Please see the Git tag that corresponds to your version of Consul Template for the proper documentation.**
+------
+
+**The documentation in this README corresponds to the master branch of Consul Template. It may contain unreleased features or different APIs than the most recently released version.**
+
+**Please see the [Git tag](https://github.com/hashicorp/consul-template/releases) that corresponds to your version of Consul Template for the proper documentation.**
+
+------
 
 
 Installation
@@ -34,25 +40,15 @@ Query the `demo.consul.io` Consul instance, rendering the template on disk at `/
 
 ```shell
 $ consul-template \
-  -consul demo.consul.io \
+  -consul-addr demo.consul.io \
   -template "/tmp/template.ctmpl:/tmp/result"
-```
-
-Query a local Consul instance, rendering the template and restarting Nginx if the template has changed, once, polling 30s if Consul is unavailable:
-
-```shell
-$ consul-template \
-  -consul 127.0.0.1:8500 \
-  -template "/tmp/template.ctmpl:/var/www/nginx.conf:service nginx restart" \
-  -retry 30s \
-  -once
 ```
 
 Query a Consul instance, rendering multiple templates and commands as a service until stopped:
 
 ```shell
 $ consul-template \
-  -consul my.consul.internal:6124 \
+  -consul-addr my.consul.internal:6124 \
   -template "/tmp/nginx.ctmpl:/var/nginx/nginx.conf:service nginx restart" \
   -template "/tmp/redis.ctmpl:/var/redis/redis.conf:service redis restart" \
   -template "/tmp/haproxy.ctmpl:/var/haproxy/haproxy.conf"
@@ -62,8 +58,8 @@ Query a Consul instance that requires authentication, dumping the templates to s
 
 ```shell
 $ consul-template \
-  -consul my.consul.internal:6124 \
-  -template "/tmp/template.ctmpl:/tmp/result:service nginx restart"
+  -consul-addr my.consul.internal:6124 \
+  -template "/tmp/template.ctmpl:/tmp/result:service nginx restart" \
   -dry
 ```
 
@@ -71,10 +67,10 @@ Query a Consul that uses custom SSL certificates:
 
 ```shell
 $ consul-template \
-  -consul 127.0.0.1:8543 \
-  -ssl \
-  -ssl-cert /path/to/client/cert.pem \
-  -ssl-ca-cert /path/to/ca/cert.pem \
+  -consul-addr 127.0.0.1:8543 \
+  -consul-ssl \
+  -consul-ssl-cert /path/to/client/cert.pem \
+  -consul-ssl-ca-cert /path/to/ca/cert.pem \
   -template "/tmp/template.ctmpl:/tmp/result" \
   -dry \
   -once
@@ -96,20 +92,87 @@ The Consul Template configuration files are written in [HashiCorp Configuration 
 The Configuration file syntax interface supports all of the options detailed above, unless otherwise noted in the table.
 
 ```javascript
-// This is the address of the Consul agent. By default, this is 127.0.0.1:8500,
-// which is the default bind and port for a local Consul agent. It is not
-// recommended that you communicate directly with a Consul server, and instead
-// communicate with the local Consul agent. There are many reasons for this,
-// most importantly the Consul agent is able to multiplex connections to the
-// Consul server and reduce the number of open HTTP connections. Additionally,
-// it provides a "well-known" IP address for which clients can connect.
-consul = "127.0.0.1:8500"
+// This denotes the start of the configuration section for Consul. All values
+// contained in this section pertain to Consul.
+consul {
+  // This block specifies the basic authentication information to pass with the
+  // request. For more information on authentication, please see the Consul
+  // documentation.
+  auth {
+    enabled  = true
+    username = "test"
+    password = "test"
+  }
 
-// This is the ACL token to use when connecting to Consul. If you did not
-// enable ACLs on your Consul cluster, you do not need to set this option.
-//
-// This option is also available via the environment variable CONSUL_TOKEN.
-token = "abcd1234"
+  // This is the address of the Consul agent. By default, this is
+  // 127.0.0.1:8500, which is the default bind and port for a local Consul
+  // agent. It is not recommended that you communicate directly with a Consul
+  // server, and instead communicate with the local Consul agent. There are many
+  // reasons for this, most importantly the Consul agent is able to multiplex
+  // connections to the Consul server and reduce the number of open HTTP
+  // connections. Additionally, it provides a "well-known" IP address for which
+  // clients can connect.
+  address = "127.0.0.1:8500"
+
+  // This is the ACL token to use when connecting to Consul. If you did not
+  // enable ACLs on your Consul cluster, you do not need to set this option.
+  //
+  // This option is also available via the environment variable CONSUL_TOKEN.
+  token = "abcd1234"
+
+  // This controls the retry behavior when an error is returned fro Consul.
+  // Consul Template is highly fault tolerant, meaning it does not exit in the
+  // face of failure. Instead, it uses exponential back-off and retry functions
+  // to wait for the cluster to become available, as is customary in distributed
+  // systems.
+  retry {
+    // This enabled retries. Retries are enabled by default, so this is
+    // redundant.
+    enabled = true
+
+    // This specifies the number of attempts to make before giving up. Each
+    // attempt adds the exponential backoff sleep time. Setting this to a
+    // negative number will implement an unlimited number of retries.
+    attempts = 5
+
+    // This is the base amount of time to sleep between retry attempts. Each
+    // retry sleeps for an exponent of 2 longer than this base. For 5 retries,
+    // the sleep times would be: 250ms, 500ms, 1s, 2s, then 4s.
+    backoff = "250ms"
+  }
+  // This block configures the SSL options for connecting to the Consul server.
+  ssl {
+    // This enables SSL. Specifying any option for SSL will also enable it.
+    enabled = true
+
+    // This enables SSL peer verification. The default value is "true", which
+    // will check the global CA chain to make sure the given certificates are
+    // valid. If you are using a self-signed certificate that you have not added
+    // to the CA chain, you may want to disable SSL verification. However, please
+    // understand this is a potential security vulnerability.
+    verify = false
+
+    // This is the path to the certificate to use to authenticate. If just a
+    // certificate is provided, it is assumed to contain both the certificate and
+    // the key to convert to an X509 certificate. If both the certificate and
+    // key are specified, Consul Template will automatically combine them into an
+    // X509 certificate for you.
+    cert = "/path/to/client/cert"
+    key = "/path/to/client/key"
+
+    // This is the path to the certificate authority to use as a CA. This is
+    // useful for self-signed certificates or for organizations using their own
+    // internal certificate authority.
+    ca_cert = "/path/to/ca"
+
+    // This is the path to a directory of PEM-encoded CA cert files. If both
+    // `ca_cert` and `ca_path` is specified, `ca_cert` is preferred.
+    ca_path = "path/to/certs/"
+
+    // This sets the SNI server name to use for validation.
+    server_name = "my-server.com"
+  }
+}
 
 // This is the signal to listen for to trigger a reload event. The default
 // value is shown below. Setting this value to the empty string will cause CT
@@ -132,13 +195,6 @@ kill_signal = "SIGINT"
 env {
   // ...
 }
-
-// This is the amount of time to wait before retrying a connection to Consul.
-// Consul Template is highly fault tolerant, meaning it does not exit in the
-// face of failure. Instead, it uses exponential back-off and retry functions to
-// wait for the cluster to become available, as is customary in distributed
-// systems.
-retry = "10s"
 
 // This is the maximum interval to allow "stale" data. By default, only the
 // Consul leader will respond to queries; any requests to a follower will
@@ -200,50 +256,19 @@ vault {
   // applies to the top-level Vault token itself.
   renew_token = true
 
+  // This section details the retry options for connecting to Vault. Please see
+  // the retry options in the Consul section for more information (they are the
+  // same).
+  retry {
+    // ...
+  }
+
   // This section details the SSL options for connecting to the Vault server.
-  // Please see the SSL options below for more information (they are the same).
+  // Please see the SSL options in the Consul section for more information (they
+  // are the same).
   ssl {
     // ...
   }
-}
-
-// This block specifies the basic authentication information to pass with the
-// request. For more information on authentication, please see the Consul
-// documentation.
-auth {
-  enabled  = true
-  username = "test"
-  password = "test"
-}
-
-// This block configures the SSL options for connecting to the Consul server.
-ssl {
-  // This enables SSL. Specifying any option for SSL will also enable it.
-  enabled = true
-
-  // This enables SSL peer verification. The default value is "true", which
-  // will check the global CA chain to make sure the given certificates are
-  // valid. If you are using a self-signed certificate that you have not added
-  // to the CA chain, you may want to disable SSL verification. However, please
-  // understand this is a potential security vulnerability.
-  verify = false
-
-  // This is the path to the certificate to use to authenticate. If just a
-  // certificate is provided, it is assumed to contain both the certificate and
-  // the key to convert to an X509 certificate. If both the certificate and
-  // key are specified, Consul Template will automatically combine them into an
-  // X509 certificate for you.
-  cert = "/path/to/client/cert"
-  key = "/path/to/client/key"
-
-  // This is the path to the certificate authority to use as a CA. This is
-  // useful for self-signed certificates or for organizations using their own
-  // internal certificate authority.
-  ca_cert = "/path/to/ca"
-
-  // This is the path to a directory of PEM-encoded CA cert files. If both
-  // `ca_cert` and `ca_path` is specified, `ca_cert` is preferred.
-  ca_path = "path/to/certs/"
 }
 
 // This block defines the configuration for connecting to a syslog server for
@@ -320,14 +345,14 @@ exec {
   }
 
   // This defines the signal that will be sent to the child process when a
-  // change occurs in a watched template. The signal will only be sent after
-  // the process is started, and the process will only be started after all
-  // dependent templates have been rendered at least once. The default value
-  // is "" (empty or nil), which tells Consul Template to restart the child
-  // process instead of sending it a signal. This is useful for legacy
-  // applications or applications that cannot properly reload their
-  // configuration without a full reload.
-  reload_signal = "SIGUSR1"
+  // change occurs in a watched template. The signal will only be sent after the
+  // process is started, and the process will only be started after all
+  // dependent templates have been rendered at least once. The default value is
+  // nil, which tells Consul Template to stop the child process and spawn a new
+  // one instead of sending it a signal. This is useful for legacy applications
+  // or applications that cannot properly reload their configuration without a
+  // full reload.
+  reload_signal = ""
 
   // This defines the signal sent to the child process when Consul Template is
   // gracefully shutting down. The application should begin a graceful cleanup.
@@ -754,7 +779,7 @@ Returns the value in the scratchpad at the named key. If the data does not
 exist, this will return "nil".
 
 ```liquid
-{{ scratch.Key "foo" }}
+{{ scratch.Get "foo" }}
 ```
 
 ##### `scratch.Set`
@@ -804,6 +829,60 @@ Returns a sorted list (by key) of all values in the named map.
 - - -
 
 #### Helper Functions
+
+##### `base64Decode`
+Accepts a base64-encoded string and returns the decoded result, or an error if
+the given string is not a valid base64 string.
+
+```liquid
+{{ base64Decode "aGVsbG8=" }}
+```
+
+The result would be:
+
+```text
+hello
+```
+
+##### `base64Encode`
+Accepts a string and returns a base64-encoded string.
+
+```liquid
+{{ base64Encode "hello" }}
+```
+
+The result would be:
+
+```text
+aGVsbG8=
+```
+
+##### `base64URLDecode`
+Accepts a base64-encoded URL-safe string and returns the decoded result, or an
+error if the given string is not a valid base64 URL-safe string.
+
+```liquid
+{{ base64URLDecode "aGVsbG8=" }}
+```
+
+The result would be:
+
+```text
+hello
+```
+
+##### `base64URLEncode`
+Accepts a string and returns a base-64 encoded URL-safe string.
+
+```liquid
+{{ base64Encode "hello" }}
+```
+
+The result would be:
+
+```text
+aGVsbG8=
+```
 
 ##### `byKey`
 Takes the list of key pairs returned from a [`tree`](#tree) function and creates a map that groups pairs by their top-level directory. For example, if the Consul KV store contained the following structure:
@@ -895,13 +974,13 @@ Returns `true` if the list of needles is empty.
 {{ end }}
 ```
 
-#### `containsNotall`
+#### `containsNotAll`
 Returns `true` if some needle is not within an iterable element,
 or `false` otherwise.
 Returns `false` if the list of needles is empty.
 
 ```liquid
-{{ if containsNotall $excludingTags .Tags }}
+{{ if containsNotAll $excludingTags .Tags }}
 # ...
 {{ end }}
 ```
@@ -1406,7 +1485,7 @@ $ consul-template \
     -exec="/bin/my-server -config /tmp/server.conf"
 ```
 
-When Consul Template starts, it will pull the required dependencies and populate the `/tmp/server.conf`, which the `my-server` binary consumes. After that template is rendered completely the first time, Consul Template spawns and manages a child process. When any of the list templates change, Consul Template will send the configurable reload signal to that child process. If no reload signal is provided, Consul Template will kill and restart the process. Additionally, in this mode, Consul Template will proxy any signals it receives to the child process. This enables a scheduler to control the lifecycle of the process and also eases the friction of running inside a container.
+When Consul Template starts, it will pull the required dependencies and populate the `/tmp/server.conf`, which the `my-server` binary consumes. After that template is rendered completely the first time, Consul Template spawns and manages a child process. When any of the list templates change, Consul Template will send a configurable reload signal to the child process. Additionally, Consul Template will proxy any signals it receives to the child process. This enables a scheduler to control the lifecycle of the process and also eases the friction of running inside a container.
 
 A common point of confusion is that the command string behaves the same as the shell; it does not. In the shell, when you run `foo | bar` or `foo > bar`, that is actually running as a subprocess of your shell (bash, zsh, csh, etc.). When Consul Template spawns the exec process, it runs outside of your shell. This behavior is _different_ from when Consul Template executes the template-specific reload command. If you want the ability to pipe or redirect in the exec command, you will need to spawn the process in subshell, for example:
 
@@ -1439,7 +1518,7 @@ There are some additional caveats with Exec Mode, which should be considered car
 - If the child process dies, the Consul Template process will also die. Consul Template **does not supervise the process!** This is generally the responsibility of the scheduler or init system.
 - The child process must remain in the foreground. This is a requirement for Consul Template to manage the process and send signals.
 - The exec command will only start after _all_ templates have been rendered at least once. One may have multiple templates for a single Consul Template process, all of which must be rendered before the process starts. Consider something like an nginx or apache configuration where both the process configuration file and individual site configuration must be written in order for the service to successfully start.
-- After the child process is started, any change to any dependent template will cause the reload signal to be sent to the child process. This reload signal defaults to nil, in which Consul Template will not kill and respawn the child. The reload signal can be specified and customized via the CLI or configuration file.
+- After the child process is started, any change to any dependent template will cause the reload signal to be sent to the child process. If no reload signal is provided, Consul Template will kill the process and spawn a new instance. The reload signal can be specified and customized via the CLI or configuration file.
 - When Consul Template is stopped gracefully, it will send the configurable kill signal to the child process. The default value is SIGTERM, but it can be customized via the CLI or configuration file.
 - Consul Template will forward all signals it receives to the child process **except** its defined `reload_signal`, `dump_signal`, and `kill_signal`. If you disable these signals, Consul Template will forward them to the child process.
 - It is not possible to have more than one exec command (although each template can still have its own reload command).

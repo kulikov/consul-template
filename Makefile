@@ -4,8 +4,8 @@ CURRENT_DIR := $(dir $(realpath $(MKFILE_PATH)))
 CURRENT_DIR := $(CURRENT_DIR:/=)
 
 # Get the project metadata
-GOVERSION := 1.7.4
-VERSION := 0.18.0-rc1
+GOVERSION := 1.8
+VERSION := 0.18.0
 PROJECT := github.com/hashicorp/consul-template
 OWNER := $(dir $(PROJECT))
 OWNER := $(notdir $(OWNER:/=))
@@ -30,17 +30,28 @@ TEST ?= ./...
 # List all our actual files, excluding vendor
 GOFILES = $(shell go list $(TEST) | grep -v /vendor/)
 
+# Tags specific for building
+GOTAGS ?=
+
+# Number of procs to use
+GOMAXPROCS ?= 4
+
 # bin builds the project by invoking the compile script inside of a Docker
 # container. Invokers can override the target OS or architecture using
 # environment variables.
 bin:
 	@echo "==> Building ${PROJECT}..."
 	@docker run \
+		--interactive \
+		--tty \
 		--rm \
+		--dns=8.8.8.8 \
 		--env="VERSION=${VERSION}" \
 		--env="PROJECT=${PROJECT}" \
 		--env="OWNER=${OWNER}" \
 		--env="NAME=${NAME}" \
+		--env="GOMAXPROCS=${GOMAXPROCS}" \
+		--env="GOTAGS=${GOTAGS}" \
 		--env="XC_OS=${XC_OS}" \
 		--env="XC_ARCH=${XC_ARCH}" \
 		--env="XC_EXCLUDE=${XC_EXCLUDE}" \
@@ -59,6 +70,8 @@ bin-local:
 		PROJECT="${PROJECT}" \
 		OWNER="${OWNER}" \
 		NAME="${NAME}" \
+		GOMAXPROCS="${GOMAXPROCS}" \
+		GOTAGS="${GOTAGS}" \
 		XC_OS="${XC_OS}" \
 		XC_ARCH="${XC_ARCH}" \
 		XC_EXCLUDE="${XC_EXCLUDE}" \
@@ -76,11 +89,15 @@ bootstrap:
 # deps gets all the dependencies for this repository and vendors them.
 deps:
 	@echo "==> Updating dependencies..."
-	@echo "--> Installing dependency manager..."
-	@go get -u github.com/kardianos/govendor
-	@govendor init
-	@echo "--> Installing all dependencies..."
-	@govendor fetch -v +outside
+	@docker run \
+		--interactive \
+		--tty \
+		--rm \
+		--dns=8.8.8.8 \
+		--env="GOMAXPROCS=${GOMAXPROCS}" \
+		--workdir="/go/src/${PROJECT}" \
+		--volume="${CURRENT_DIR}:/go/src/${PROJECT}" \
+		"golang:${GOVERSION}" /usr/bin/env sh -c "scripts/deps.sh"
 
 # dev builds the project for the current system as defined by go env.
 dev:
@@ -99,6 +116,14 @@ endif
 
 # dist builds the binaries and then signs and packages them for distribution
 dist:
+ifndef GPG_KEY
+	@echo "==> WARNING: No GPG key specified! Without a GPG key, this release"
+	@echo "             will not be signed. Abort now to prevent building an"
+	@echo "             unsigned release, or wait 5 seconds to continue."
+	@echo ""
+	@echo "--> Press CTRL + C to abort..."
+	@sleep 5
+endif
 	@${MAKE} -f "${MKFILE_PATH}" bin DIST=1
 	@echo "==> Tagging release (v${VERSION})..."
 ifdef GPG_KEY
@@ -135,11 +160,11 @@ docker-push:
 # test runs the test suite
 test:
 	@echo "==> Testing ${PROJECT}..."
-	@go test -timeout=60s -parallel=10 ${GOFILES} ${TESTARGS}
+	@go test -timeout=60s -parallel=10 -tags="${GOTAGS}" ${GOFILES} ${TESTARGS}
 
 # test-race runs the race checker
 test-race:
 	@echo "==> Testing ${PROJECT} (race)..."
-	@go test -timeout=60s -race ${GOFILES} ${TESTARGS}
+	@go test -timeout=60s -race -tags="${GOTAGS}" ${GOFILES} ${TESTARGS}
 
 .PHONY: bin bin-local bootstrap deps dev dist docker docker-push test test-race

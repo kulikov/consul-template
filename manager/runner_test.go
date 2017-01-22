@@ -30,7 +30,9 @@ func TestRunner_Receive(t *testing.T) {
 			t.Fatal(err)
 		}
 		data := "bar"
+		r.dependenciesLock.Lock()
 		r.dependencies[d.String()] = d
+		r.dependenciesLock.Unlock()
 		r.Receive(d, data)
 
 		val, ok := r.brain.Recall(d)
@@ -301,7 +303,7 @@ func TestRunner_Run(t *testing.T) {
 			"env",
 			func(t *testing.T, r *Runner) {
 				r.dry = false
-				r.config.Consul = config.String("1.2.3.4")
+				r.config.Consul.Address = config.String("1.2.3.4")
 			},
 			&config.Config{
 				Templates: &config.TemplateConfigs{
@@ -467,7 +469,9 @@ func TestRunner_Start(t *testing.T) {
 		defer os.Remove(out.Name())
 
 		c := config.DefaultConfig().Merge(&config.Config{
-			Consul: config.String(consul.HTTPAddr),
+			Consul: &config.ConsulConfig{
+				Address: config.String(consul.HTTPAddr),
+			},
 			Templates: &config.TemplateConfigs{
 				&config.TemplateConfig{
 					Contents:    config.String(`{{ key "foo" }}`),
@@ -518,7 +522,9 @@ func TestRunner_Start(t *testing.T) {
 		defer os.Remove(out.Name())
 
 		c := config.DefaultConfig().Merge(&config.Config{
-			Consul: config.String(consul.HTTPAddr),
+			Consul: &config.ConsulConfig{
+				Address: config.String(consul.HTTPAddr),
+			},
 			Templates: &config.TemplateConfigs{
 				&config.TemplateConfig{
 					Contents:    config.String(`{{ key (key "foo") }}`),

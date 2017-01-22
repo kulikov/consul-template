@@ -151,6 +151,48 @@ func TestTemplate_Execute(t *testing.T) {
 
 		// funcs
 		{
+			"func_base64Decode",
+			`{{ base64Decode "aGVsbG8=" }}`,
+			nil,
+			"hello",
+			false,
+		},
+		{
+			"func_base64Decode_bad",
+			`{{ base64Decode "aGVsxxbG8=" }}`,
+			nil,
+			"",
+			true,
+		},
+		{
+			"func_base64Encode",
+			`{{ base64Encode "hello" }}`,
+			nil,
+			"aGVsbG8=",
+			false,
+		},
+		{
+			"func_base64URLDecode",
+			`{{ base64URLDecode "dGVzdGluZzEyMw==" }}`,
+			nil,
+			"testing123",
+			false,
+		},
+		{
+			"func_base64URLDecode_bad",
+			`{{ base64URLDecode "aGVsxxbG8=" }}`,
+			nil,
+			"",
+			true,
+		},
+		{
+			"func_base64URLEncode",
+			`{{ base64URLEncode "testing123" }}`,
+			nil,
+			"dGVzdGluZzEyMw==",
+			false,
+		},
+		{
 			"func_datacenters",
 			`{{ datacenters }}`,
 			&ExecuteInput{
@@ -165,6 +207,43 @@ func TestTemplate_Execute(t *testing.T) {
 				}(),
 			},
 			"[dc1 dc2]",
+			false,
+		},
+		{
+			"func_env",
+			`{{ env "CT_TEST" }}`,
+			&ExecuteInput{
+				Brain: func() *Brain {
+					b := NewBrain()
+					d, err := dep.NewEnvQuery("CT_TEST")
+					if err != nil {
+						t.Fatal(err)
+					}
+					b.Remember(d, "1")
+					return b
+				}(),
+			},
+			"1",
+			false,
+		},
+		{
+			"func_env__override",
+			`{{ env "CT_TEST" }}`,
+			&ExecuteInput{
+				Env: []string{
+					"CT_TEST=2",
+				},
+				Brain: func() *Brain {
+					b := NewBrain()
+					d, err := dep.NewEnvQuery("CT_TEST")
+					if err != nil {
+						t.Fatal(err)
+					}
+					b.Remember(d, "1")
+					return b
+				}(),
+			},
+			"2",
 			false,
 		},
 		{
@@ -302,7 +381,7 @@ func TestTemplate_Execute(t *testing.T) {
 			false,
 		},
 		{
-			"func_secret",
+			"func_secret_read",
 			`{{ with secret "secret/foo" }}{{ .Data.zip }}{{ end }}`,
 			&ExecuteInput{
 				Brain: func() *Brain {
@@ -324,8 +403,87 @@ func TestTemplate_Execute(t *testing.T) {
 			false,
 		},
 		{
+			"func_secret_read_no_exist",
+			`{{ with secret "secret/nope" }}{{ .Data.zip }}{{ end }}`,
+			&ExecuteInput{
+				Brain: func() *Brain {
+					return NewBrain()
+				}(),
+			},
+			"",
+			false,
+		},
+		{
+			"func_secret_read_no_exist_falsey",
+			`{{ if secret "secret/nope" }}yes{{ else }}no{{ end }}`,
+			&ExecuteInput{
+				Brain: func() *Brain {
+					return NewBrain()
+				}(),
+			},
+			"no",
+			false,
+		},
+		{
+			"func_secret_write",
+			`{{ with secret "transit/encrypt/foo" "plaintext=a" }}{{ .Data.ciphertext }}{{ end }}`,
+			&ExecuteInput{
+				Brain: func() *Brain {
+					b := NewBrain()
+					d, err := dep.NewVaultWriteQuery("transit/encrypt/foo", map[string]interface{}{
+						"plaintext": "a",
+					})
+					if err != nil {
+						t.Fatal(err)
+					}
+					b.Remember(d, &dep.Secret{
+						LeaseID:       "abcd1234",
+						LeaseDuration: 120,
+						Renewable:     true,
+						Data:          map[string]interface{}{"ciphertext": "encrypted"},
+					})
+					return b
+				}(),
+			},
+			"encrypted",
+			false,
+		},
+		{
+			"func_secret_write_no_exist",
+			`{{ with secret "secret/nope" "a=b" }}{{ .Data.zip }}{{ end }}`,
+			&ExecuteInput{
+				Brain: func() *Brain {
+					return NewBrain()
+				}(),
+			},
+			"",
+			false,
+		},
+		{
+			"func_secret_write_no_exist_falsey",
+			`{{ if secret "secret/nope" "a=b" }}yes{{ else }}no{{ end }}`,
+			&ExecuteInput{
+				Brain: func() *Brain {
+					return NewBrain()
+				}(),
+			},
+			"no",
+			false,
+		},
+		{
+			"func_secret_no_exist_falsey_with",
+			`{{ with secret "secret/nope" }}{{ .Data.foo.bar }}{{ end }}`,
+			&ExecuteInput{
+				Brain: func() *Brain {
+					return NewBrain()
+				}(),
+			},
+			"",
+			false,
+		},
+		{
 			"func_secrets",
-			`{{ range secrets "secret/" }}{{ . }}{{ end }}`,
+			`{{ secrets "secret/" }}`,
 			&ExecuteInput{
 				Brain: func() *Brain {
 					b := NewBrain()
@@ -337,7 +495,40 @@ func TestTemplate_Execute(t *testing.T) {
 					return b
 				}(),
 			},
-			"barfoo",
+			"[bar foo]",
+			false,
+		},
+		{
+			"func_secrets_no_exist",
+			`{{ secrets "secret/" }}`,
+			&ExecuteInput{
+				Brain: func() *Brain {
+					return NewBrain()
+				}(),
+			},
+			"[]",
+			false,
+		},
+		{
+			"func_secrets_no_exist_falsey",
+			`{{ if secrets "secret/" }}yes{{ else }}no{{ end }}`,
+			&ExecuteInput{
+				Brain: func() *Brain {
+					return NewBrain()
+				}(),
+			},
+			"no",
+			false,
+		},
+		{
+			"func_secrets_no_exist_falsey_with",
+			`{{ with secrets "secret/" }}{{ . }}{{ end }}`,
+			&ExecuteInput{
+				Brain: func() *Brain {
+					return NewBrain()
+				}(),
+			},
+			"",
 			false,
 		},
 		{
@@ -691,8 +882,8 @@ func TestTemplate_Execute(t *testing.T) {
 			false,
 		},
 		{
-			"helper_containsNotall",
-			`{{ $excludingTags := parseJSON "[\"es-v1\",\"es-v2\"]" }}{{ range service "webapp" }}{{ if .Tags | containsNotall $excludingTags }}{{ .Address }}{{ end }}{{ end }}`,
+			"helper_containsNotAll",
+			`{{ $excludingTags := parseJSON "[\"es-v1\",\"es-v2\"]" }}{{ range service "webapp" }}{{ if .Tags | containsNotAll $excludingTags }}{{ .Address }}{{ end }}{{ end }}`,
 			&ExecuteInput{
 				Brain: func() *Brain {
 					b := NewBrain()
@@ -717,8 +908,8 @@ func TestTemplate_Execute(t *testing.T) {
 			false,
 		},
 		{
-			"helper_containsNotall__empty",
-			`{{ $excludingTags := parseJSON "[]" }}{{ range service "webapp" }}{{ if .Tags | containsNotall $excludingTags }}{{ .Address }}{{ end }}{{ end }}`,
+			"helper_containsNotAll__empty",
+			`{{ $excludingTags := parseJSON "[]" }}{{ range service "webapp" }}{{ if .Tags | containsNotAll $excludingTags }}{{ .Address }}{{ end }}{{ end }}`,
 			&ExecuteInput{
 				Brain: func() *Brain {
 					b := NewBrain()
@@ -740,33 +931,6 @@ func TestTemplate_Execute(t *testing.T) {
 				}(),
 			},
 			"",
-			false,
-		},
-		{
-			"helper_env",
-			`{{ env "CT_TEST" }}`,
-			&ExecuteInput{
-				Brain: func() *Brain {
-					// Cheat and use the brain callback here to set the env.
-					if err := os.Setenv("CT_TEST", "1"); err != nil {
-						t.Fatal(err)
-					}
-					return NewBrain()
-				}(),
-			},
-			"1",
-			false,
-		},
-		{
-			"helper_env__override",
-			`{{ env "CT_TEST" }}`,
-			&ExecuteInput{
-				Env: []string{
-					"CT_TEST=2",
-				},
-				Brain: NewBrain(),
-			},
-			"2",
 			false,
 		},
 		{

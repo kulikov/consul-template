@@ -13,10 +13,19 @@ import (
 )
 
 var (
-	ErrTemplateContentsAndSource        = errors.New("template: cannot specify both 'source' and 'content'")
+	// ErrTemplateContentsAndSource is the error returned when a template
+	// specifies both a "source" and "content" argument, which is not valid.
+	ErrTemplateContentsAndSource = errors.New("template: cannot specify both 'source' and 'content'")
+
+	// ErrTemplateMissingContentsAndSource is the error returned when a template
+	// does not specify either a "source" or "content" argument, which is not
+	// valid.
 	ErrTemplateMissingContentsAndSource = errors.New("template: must specify exactly one of 'source' or 'content'")
 )
 
+// Template is the internal representation of an individual template to process.
+// The template retains the relationship between it's contents and is
+// responsible for it's own execution.
 type Template struct {
 	// contents is the string contents for the template. It is either given
 	// during template creation or read from disk when initialized.
@@ -177,6 +186,7 @@ func funcMap(i *funcMapInput) template.FuncMap {
 	return template.FuncMap{
 		// API functions
 		"datacenters":  datacentersFunc(i.brain, i.used, i.missing),
+		"env":          envFunc(i.brain, i.used, i.missing, i.env),
 		"file":         fileFunc(i.brain, i.used, i.missing),
 		"key":          keyFunc(i.brain, i.used, i.missing),
 		"keyExists":    keyExistsFunc(i.brain, i.used, i.missing),
@@ -194,14 +204,17 @@ func funcMap(i *funcMapInput) template.FuncMap {
 		"scratch": func() *Scratch { return &scratch },
 
 		// Helper functions
+		"base64Decode":    base64Decode,
+		"base64Encode":    base64Encode,
+		"base64URLDecode": base64URLDecode,
+		"base64URLEncode": base64URLEncode,
 		"byKey":           byKey,
 		"byTag":           byTag,
 		"contains":        contains,
 		"containsAll":     containsSomeFunc(true, true),
 		"containsAny":     containsSomeFunc(false, false),
 		"containsNone":    containsSomeFunc(true, false),
-		"containsNotall":  containsSomeFunc(false, true),
-		"env":             envFunc(i.env),
+		"containsNotAll":  containsSomeFunc(false, true),
 		"executeTemplate": executeTemplateFunc(i.t),
 		"explode":         explode,
 		"in":              in,

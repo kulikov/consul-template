@@ -109,8 +109,46 @@ type Runner struct {
 // RenderEvent captures the time and events that occurred for a template
 // rendering.
 type RenderEvent struct {
+	// Missing is the list of dependencies that we do not yet have data for, but
+	// are contained in the watcher. This is different from unwatched dependencies,
+	// which includes dependencies the watcher has not yet started querying for
+	// data.
+	MissingDeps *dep.Set
+
+	// Template is the template attempting to be rendered.
+	Template *template.Template
+
+	// TemplateConfigs is the list of template configs that correspond to this
+	// template.
+	TemplateConfigs []*config.TemplateConfig
+
+	// Unwatched is the list of dependencies that are not present in the watcher.
+	// This value may change over time due to the n-pass evaluation.
+	UnwatchedDeps *dep.Set
+
+	// UpdatedAt is the last time this render event was updated.
+	UpdatedAt time.Time
+
+	// Used is the full list of dependencies seen in the template. Because of
+	// the n-pass evaluation, this number can change over time. The dependecnies
+	// in this list may or may not have data. This just contains the list of all
+	// dependencies parsed out of the template with the current data.
+	UsedDeps *dep.Set
+
+	// WouldRender determines if the template would have been rendered. A template
+	// would have been rendered if all the dependencies are satisfied, but may
+	// not have actually rendered if the file was already present or if an error
+	// occurred when trying to write the file.
+	WouldRender bool
+
 	// LastWouldRender marks the last time the template would have rendered.
 	LastWouldRender time.Time
+
+	// DidRender determines if the Template was actually written to disk. In dry
+	// mode, this will always be false, since templates are not written to disk
+	// in dry mode. A template is only rendered to disk if all dependencies are
+	// satisfied and the template is not already in place with the same contents.
+	DidRender bool
 
 	// LastDidRender marks the last time the template was written to disk.
 	LastDidRender time.Time
@@ -271,9 +309,9 @@ func (r *Runner) Start() {
 
 	OUTER:
 		select {
-		case view := <-r.watcher.DataCh:
+		case view := <-r.watcher.DataCh():
 			// Receive this update
-			r.Receive(view.Dependency, view.Data())
+			r.Receive(view.Dependency(), view.Data())
 
 			// Drain all dependency data. Given a large number of dependencies, it is
 			// feasible that we have data for more than one of them. Instead of
@@ -286,8 +324,8 @@ func (r *Runner) Start() {
 			// more information about this optimization and the entire backstory.
 			for {
 				select {
-				case view := <-r.watcher.DataCh:
-					r.Receive(view.Dependency, view.Data())
+				case view := <-r.watcher.DataCh():
+					r.Receive(view.Dependency(), view.Data())
 				default:
 					break OUTER
 				}
@@ -300,29 +338,11 @@ func (r *Runner) Start() {
 			log.Printf("[INFO] (runner) watcher triggered by de-duplication manager")
 			break OUTER
 
-		case err := <-r.watcher.ErrCh:
-			// If this is our own internal error, see if we should hard exit.
-			if derr, ok := err.(*dep.FetchError); ok {
-				log.Printf("[DEBUG] (runner) detected custom error type")
-				if derr.ShouldExit() {
-					log.Printf("[DEBUG] (runner) custom error asked for hard exit")
-					r.ErrCh <- derr.OriginalError()
-					return
-				}
-			}
-
-			// Intentionally do not send the error back up to the runner. Eventually,
-			// once Consul API implements errwrap and multierror, we can check the
-			// "type" of error and conditionally alert back.
-			//
-			// if err.Contains(Something) {
-			//   errCh <- err
-			// }
+		case err := <-r.watcher.ErrCh():
+			// Push the error back up the stack
 			log.Printf("[ERR] (runner) watcher reported error: %s", err)
-			if r.once {
-				r.ErrCh <- err
-				return
-			}
+			r.ErrCh <- err
+			return
 
 		case tmpl := <-r.quiescenceCh:
 			// Remove the quiescence for this template from the map. This will force
@@ -340,8 +360,8 @@ func (r *Runner) Start() {
 			return
 		}
 
-		// If we got this far, that means we got new data or one of the timers fired,
-		// so attempt to re-render.
+		// If we got this far, that means we got new data or one of the timers
+		// fired, so attempt to re-render.
 		if err := r.Run(); err != nil {
 			r.ErrCh <- err
 			return
@@ -471,6 +491,20 @@ func (r *Runner) Run() error {
 	for _, tmpl := range r.templates {
 		log.Printf("[DEBUG] (runner) checking template %s", tmpl.ID())
 
+		// Grab the last event
+		lastEvent := r.renderEvents[tmpl.ID()]
+
+		// Create the event
+		event := &RenderEvent{
+			Template:        tmpl,
+			TemplateConfigs: r.templateConfigsFor(tmpl),
+		}
+
+		if lastEvent != nil {
+			event.LastWouldRender = lastEvent.LastWouldRender
+			event.LastDidRender = lastEvent.LastDidRender
+		}
+
 		// Check if we are currently the leader instance
 		isLeader := true
 		if r.dedup != nil {
@@ -519,18 +553,18 @@ func (r *Runner) Run() error {
 
 		// Diff any missing dependencies the template reported with dependencies
 		// the watcher is watching.
-		var unwatched []dep.Dependency
+		unwatched := new(dep.Set)
 		for _, d := range missing.List() {
 			if !r.watcher.Watching(d) {
-				unwatched = append(unwatched, d)
+				unwatched.Add(d)
 			}
 		}
 
 		// If there are unwatched dependencies, start the watcher and move onto the
 		// next one.
-		if len(unwatched) > 0 {
-			log.Printf("[DEBUG] (runner) was not watching %d dependencies", len(unwatched))
-			for _, d := range unwatched {
+		if l := unwatched.Len(); l > 0 {
+			log.Printf("[DEBUG] (runner) was not watching %d dependencies", l)
+			for _, d := range unwatched.List() {
 				// If we are deduplicating, we must still handle non-sharable
 				// dependencies, since those will be ignored.
 				if isLeader || !d.CanShare() {
@@ -553,6 +587,11 @@ func (r *Runner) Run() error {
 				log.Printf("[ERR] (runner) failed to update dependency data for de-duplication: %v", err)
 			}
 		}
+
+		// Update event information with dependencies.
+		event.MissingDeps = missing
+		event.UnwatchedDeps = unwatched
+		event.UsedDeps = used
 
 		// If quiescence is activated, start/update the timers and loop back around.
 		// We do not want to render the templates yet.
@@ -579,15 +618,17 @@ func (r *Runner) Run() error {
 				return errors.Wrap(err, "error rendering "+templateConfig.Display())
 			}
 
+			renderTime := time.Now().UTC()
+
 			// If we would have rendered this template (but we did not because the
 			// contents were the same or something), we should consider this template
 			// rendered even though the contents on disk have not been updated. We
 			// will not fire commands unless the template was _actually_ rendered to
 			// disk though.
 			if result.WouldRender {
-				// Make a note that we have rendered this template (required for once
-				// mode and just generally nice for debugging purposes).
-				r.markRenderTime(tmpl.ID(), false)
+				// This event would have rendered
+				event.WouldRender = true
+				event.LastWouldRender = renderTime
 
 				// Record that at least one template would have been rendered.
 				wouldRenderAny = true
@@ -598,11 +639,12 @@ func (r *Runner) Run() error {
 			if result.DidRender {
 				log.Printf("[INFO] (runner) rendered %s", templateConfig.Display())
 
+				// This event did render
+				event.DidRender = true
+				event.LastDidRender = renderTime
+
 				// Record that at least one template was rendered.
 				renderedAny = true
-
-				// Store the render time
-				r.markRenderTime(tmpl.ID(), true)
 
 				if !r.dry {
 					// If the template was rendered (changed) and we are not in dry-run mode,
@@ -629,6 +671,12 @@ func (r *Runner) Run() error {
 				}
 			}
 		}
+
+		// Send updated render event
+		r.renderEventsLock.Lock()
+		event.UpdatedAt = time.Now().UTC()
+		r.renderEvents[tmpl.ID()] = event
+		r.renderEventsLock.Unlock()
 	}
 
 	// Check if we need to deliver any rendered signals
@@ -696,6 +744,7 @@ func (r *Runner) Run() error {
 func (r *Runner) init() error {
 	// Ensure default configuration values
 	r.config = config.DefaultConfig().Merge(r.config)
+	r.config.Finalize()
 
 	// Print the final config for debugging
 	result, err := json.Marshal(r.config)
@@ -767,8 +816,7 @@ func (r *Runner) init() error {
 	r.quiescenceMap = make(map[string]*quiescence)
 	r.quiescenceCh = make(chan *template.Template)
 
-	// Setup the dedup manager if needed. This is
-	if config.BoolVal(r.config.Dedup.Enabled) {
+	if *r.config.Dedup.Enabled {
 		if r.once {
 			log.Printf("[INFO] (runner) disabling de-duplication in once mode")
 		} else {
@@ -843,45 +891,21 @@ func (r *Runner) allTemplatesRendered() bool {
 	return true
 }
 
-// markRenderTime stores the render time for the given template. If didRender is
-// true, it stores the time for the template having been rendered, otherwise it
-// stores it as would have been rendered.
-func (r *Runner) markRenderTime(tmplID string, didRender bool) {
-	r.renderEventsLock.Lock()
-	defer r.renderEventsLock.Unlock()
-
-	// Get the current time
-	now := time.Now()
-
-	// Create the event for the template ID if it is the first time
-	event, ok := r.renderEvents[tmplID]
-	if !ok {
-		event = &RenderEvent{}
-		r.renderEvents[tmplID] = event
-	}
-
-	if didRender {
-		event.LastDidRender = now
-	} else {
-		event.LastWouldRender = now
-	}
-}
-
 // childEnv creates a map of environment variables for child processes to have
 // access to configurations in Consul Template's configuration.
 func (r *Runner) childEnv() []string {
 	var m = make(map[string]string)
 
-	if config.StringPresent(r.config.Consul) {
-		m["CONSUL_HTTP_ADDR"] = config.StringVal(r.config.Consul)
+	if config.StringPresent(r.config.Consul.Address) {
+		m["CONSUL_HTTP_ADDR"] = config.StringVal(r.config.Consul.Address)
 	}
 
-	if config.BoolVal(r.config.Auth.Enabled) {
-		m["CONSUL_HTTP_AUTH"] = r.config.Auth.String()
+	if config.BoolVal(r.config.Consul.Auth.Enabled) {
+		m["CONSUL_HTTP_AUTH"] = r.config.Consul.Auth.String()
 	}
 
-	m["CONSUL_HTTP_SSL"] = strconv.FormatBool(config.BoolVal(r.config.SSL.Enabled))
-	m["CONSUL_HTTP_SSL_VERIFY"] = strconv.FormatBool(config.BoolVal(r.config.SSL.Verify))
+	m["CONSUL_HTTP_SSL"] = strconv.FormatBool(config.BoolVal(r.config.Consul.SSL.Enabled))
+	m["CONSUL_HTTP_SSL_VERIFY"] = strconv.FormatBool(config.BoolVal(r.config.Consul.SSL.Verify))
 
 	if config.StringPresent(r.config.Vault.Address) {
 		m["VAULT_ADDR"] = config.StringVal(r.config.Vault.Address)
@@ -1087,18 +1111,18 @@ func newClientSet(c *config.Config) (*dep.ClientSet, error) {
 	clients := dep.NewClientSet()
 
 	if err := clients.CreateConsulClient(&dep.CreateConsulClientInput{
-		Address:      config.StringVal(c.Consul),
-		Token:        config.StringVal(c.Token),
-		AuthEnabled:  config.BoolVal(c.Auth.Enabled),
-		AuthUsername: config.StringVal(c.Auth.Username),
-		AuthPassword: config.StringVal(c.Auth.Password),
-		SSLEnabled:   config.BoolVal(c.SSL.Enabled),
-		SSLVerify:    config.BoolVal(c.SSL.Verify),
-		SSLCert:      config.StringVal(c.SSL.Cert),
-		SSLKey:       config.StringVal(c.SSL.Key),
-		SSLCACert:    config.StringVal(c.SSL.CaCert),
-		SSLCAPath:    config.StringVal(c.SSL.CaPath),
-		ServerName:   config.StringVal(c.SSL.ServerName),
+		Address:      config.StringVal(c.Consul.Address),
+		Token:        config.StringVal(c.Consul.Token),
+		AuthEnabled:  config.BoolVal(c.Consul.Auth.Enabled),
+		AuthUsername: config.StringVal(c.Consul.Auth.Username),
+		AuthPassword: config.StringVal(c.Consul.Auth.Password),
+		SSLEnabled:   config.BoolVal(c.Consul.SSL.Enabled),
+		SSLVerify:    config.BoolVal(c.Consul.SSL.Verify),
+		SSLCert:      config.StringVal(c.Consul.SSL.Cert),
+		SSLKey:       config.StringVal(c.Consul.SSL.Key),
+		SSLCACert:    config.StringVal(c.Consul.SSL.CaCert),
+		SSLCAPath:    config.StringVal(c.Consul.SSL.CaPath),
+		ServerName:   config.StringVal(c.Consul.SSL.ServerName),
 	}); err != nil {
 		return nil, fmt.Errorf("runner: %s", err)
 	}
@@ -1123,20 +1147,21 @@ func newClientSet(c *config.Config) (*dep.ClientSet, error) {
 
 // newWatcher creates a new watcher.
 func newWatcher(c *config.Config, clients *dep.ClientSet, once bool) (*watch.Watcher, error) {
-	log.Printf("[INFO] (runner) creating Watcher")
+	log.Printf("[INFO] (runner) creating watcher")
 
-	watcher, err := watch.NewWatcher(&watch.WatcherConfig{
-		Clients:  clients,
-		Once:     once,
-		MaxStale: config.TimeDurationVal(c.MaxStale),
-		RetryFunc: func(current time.Duration) time.Duration {
-			return config.TimeDurationVal(c.Retry)
-		},
-		RenewVault: config.StringPresent(c.Vault.Token) && config.BoolVal(c.Vault.RenewToken),
+	w, err := watch.NewWatcher(&watch.NewWatcherInput{
+		Clients:         clients,
+		MaxStale:        config.TimeDurationVal(c.MaxStale),
+		Once:            once,
+		RenewVault:      config.StringPresent(c.Vault.Token) && config.BoolVal(c.Vault.RenewToken),
+		RetryFuncConsul: watch.RetryFunc(c.Consul.Retry.RetryFunc()),
+		// TODO: Add a sane default retry - right now this only affects "local"
+		// dependencies like reading a file from disk.
+		RetryFuncDefault: nil,
+		RetryFuncVault:   watch.RetryFunc(c.Vault.Retry.RetryFunc()),
 	})
 	if err != nil {
-		return nil, err
+		return nil, errors.Wrap(err, "runner")
 	}
-
-	return watcher, err
+	return w, nil
 }

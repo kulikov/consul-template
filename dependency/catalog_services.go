@@ -45,7 +45,8 @@ func NewCatalogServicesQuery(s string) (*CatalogServicesQuery, error) {
 
 	m := regexpMatch(CatalogServicesQueryRe, s)
 	return &CatalogServicesQuery{
-		dc: m["dc"],
+		stopCh: make(chan struct{}, 1),
+		dc:     m["dc"],
 	}, nil
 }
 
@@ -108,6 +109,11 @@ func (d *CatalogServicesQuery) String() string {
 // Stop halts the dependency's fetch function.
 func (d *CatalogServicesQuery) Stop() {
 	close(d.stopCh)
+}
+
+// Type returns the type of this dependency.
+func (d *CatalogServicesQuery) Type() Type {
+	return TypeConsul
 }
 
 // ByName is a sortable slice of CatalogService structs.

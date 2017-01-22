@@ -36,8 +36,8 @@ func NewFileQuery(s string) (*FileQuery, error) {
 	}
 
 	return &FileQuery{
-		path:   s,
 		stopCh: make(chan struct{}, 1),
+		path:   s,
 	}, nil
 }
 
@@ -82,6 +82,11 @@ func (d *FileQuery) String() string {
 	return fmt.Sprintf("file(%s)", d.path)
 }
 
+// Type returns the type of this dependency.
+func (d *FileQuery) Type() Type {
+	return TypeLocal
+}
+
 type watchResult struct {
 	stat os.FileInfo
 	err  error
@@ -112,6 +117,7 @@ func (d *FileQuery) watch(lastStat os.FileInfo) <-chan *watchResult {
 				case <-d.stopCh:
 					return
 				case ch <- &watchResult{stat: stat}:
+					return
 				}
 			}
 

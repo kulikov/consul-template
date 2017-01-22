@@ -34,9 +34,9 @@ func NewKVKeysQuery(s string) (*KVKeysQuery, error) {
 
 	m := regexpMatch(KVKeysQueryRe, s)
 	return &KVKeysQuery{
+		stopCh: make(chan struct{}, 1),
 		dc:     m["dc"],
 		prefix: m["prefix"],
-		stopCh: make(chan struct{}, 1),
 	}, nil
 }
 
@@ -96,4 +96,9 @@ func (d *KVKeysQuery) String() string {
 // Stop halts the dependency's fetch function.
 func (d *KVKeysQuery) Stop() {
 	close(d.stopCh)
+}
+
+// Type returns the type of this dependency.
+func (d *KVKeysQuery) Type() Type {
+	return TypeConsul
 }
