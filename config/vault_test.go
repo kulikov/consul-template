@@ -2,8 +2,11 @@ package config
 
 import (
 	"fmt"
+	"io/ioutil"
+	"os"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestVaultConfig_Copy(t *testing.T) {
@@ -22,12 +25,15 @@ func TestVaultConfig_Copy(t *testing.T) {
 		{
 			"same_enabled",
 			&VaultConfig{
-				Address:     String("address"),
-				Enabled:     Bool(true),
-				RenewToken:  Bool(true),
-				Retry:       &RetryConfig{Enabled: Bool(true)},
-				SSL:         &SSLConfig{Enabled: Bool(true)},
-				Token:       String("token"),
+				Address:    String("address"),
+				Enabled:    Bool(true),
+				RenewToken: Bool(true),
+				Retry:      &RetryConfig{Enabled: Bool(true)},
+				SSL:        &SSLConfig{Enabled: Bool(true)},
+				Token:      String("token"),
+				Transport: &TransportConfig{
+					DialKeepAlive: TimeDuration(20 * time.Second),
+				},
 				UnwrapToken: Bool(true),
 			},
 		},
@@ -242,6 +248,30 @@ func TestVaultConfig_Merge(t *testing.T) {
 			&VaultConfig{SSL: &SSLConfig{Enabled: Bool(true)}},
 			&VaultConfig{SSL: &SSLConfig{Enabled: Bool(true)}},
 		},
+		{
+			"transport_overrides",
+			&VaultConfig{Transport: &TransportConfig{DialKeepAlive: TimeDuration(10 * time.Second)}},
+			&VaultConfig{Transport: &TransportConfig{DialKeepAlive: TimeDuration(20 * time.Second)}},
+			&VaultConfig{Transport: &TransportConfig{DialKeepAlive: TimeDuration(20 * time.Second)}},
+		},
+		{
+			"transport_empty_one",
+			&VaultConfig{Transport: &TransportConfig{DialKeepAlive: TimeDuration(10 * time.Second)}},
+			&VaultConfig{},
+			&VaultConfig{Transport: &TransportConfig{DialKeepAlive: TimeDuration(10 * time.Second)}},
+		},
+		{
+			"transport_empty_two",
+			&VaultConfig{},
+			&VaultConfig{Transport: &TransportConfig{DialKeepAlive: TimeDuration(10 * time.Second)}},
+			&VaultConfig{Transport: &TransportConfig{DialKeepAlive: TimeDuration(10 * time.Second)}},
+		},
+		{
+			"transport_same",
+			&VaultConfig{Transport: &TransportConfig{DialKeepAlive: TimeDuration(10 * time.Second)}},
+			&VaultConfig{Transport: &TransportConfig{DialKeepAlive: TimeDuration(10 * time.Second)}},
+			&VaultConfig{Transport: &TransportConfig{DialKeepAlive: TimeDuration(10 * time.Second)}},
+		},
 	}
 
 	for i, tc := range cases {
@@ -276,12 +306,21 @@ func TestVaultConfig_Finalize(t *testing.T) {
 					CaCert:     String(""),
 					CaPath:     String(""),
 					Cert:       String(""),
-					Enabled:    Bool(false),
+					Enabled:    Bool(true),
 					Key:        String(""),
 					ServerName: String(""),
 					Verify:     Bool(true),
 				},
-				Token:       String(""),
+				Token: String(""),
+				Transport: &TransportConfig{
+					DialKeepAlive:       TimeDuration(DefaultDialKeepAlive),
+					DialTimeout:         TimeDuration(DefaultDialTimeout),
+					DisableKeepAlives:   Bool(false),
+					IdleConnTimeout:     TimeDuration(DefaultIdleConnTimeout),
+					MaxIdleConns:        Int(DefaultMaxIdleConns),
+					MaxIdleConnsPerHost: Int(DefaultMaxIdleConnsPerHost),
+					TLSHandshakeTimeout: TimeDuration(DefaultTLSHandshakeTimeout),
+				},
 				UnwrapToken: Bool(DefaultVaultUnwrapToken),
 			},
 		},
@@ -303,12 +342,21 @@ func TestVaultConfig_Finalize(t *testing.T) {
 					CaCert:     String(""),
 					CaPath:     String(""),
 					Cert:       String(""),
-					Enabled:    Bool(false),
+					Enabled:    Bool(true),
 					Key:        String(""),
 					ServerName: String(""),
 					Verify:     Bool(true),
 				},
-				Token:       String(""),
+				Token: String(""),
+				Transport: &TransportConfig{
+					DialKeepAlive:       TimeDuration(DefaultDialKeepAlive),
+					DialTimeout:         TimeDuration(DefaultDialTimeout),
+					DisableKeepAlives:   Bool(false),
+					IdleConnTimeout:     TimeDuration(DefaultIdleConnTimeout),
+					MaxIdleConns:        Int(DefaultMaxIdleConns),
+					MaxIdleConnsPerHost: Int(DefaultMaxIdleConnsPerHost),
+					TLSHandshakeTimeout: TimeDuration(DefaultTLSHandshakeTimeout),
+				},
 				UnwrapToken: Bool(DefaultVaultUnwrapToken),
 			},
 		},
@@ -316,6 +364,10 @@ func TestVaultConfig_Finalize(t *testing.T) {
 
 	for i, tc := range cases {
 		t.Run(fmt.Sprintf("%d_%s", i, tc.name), func(t *testing.T) {
+			os.Unsetenv("VAULT_ADDR")
+			os.Unsetenv("VAULT_TOKEN")
+			homePath, _ = ioutil.TempDir("", "")
+
 			tc.i.Finalize()
 			if !reflect.DeepEqual(tc.r, tc.i) {
 				t.Errorf("\nexp: %#v\nact: %#v", tc.r, tc.i)

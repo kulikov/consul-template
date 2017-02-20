@@ -364,15 +364,99 @@ func TestParse(t *testing.T) {
 			false,
 		},
 		{
+			"consul_transport_dial_keep_alive",
+			`consul {
+				transport {
+					dial_keep_alive = "10s"
+				}
+			}`,
+			&Config{
+				Consul: &ConsulConfig{
+					Transport: &TransportConfig{
+						DialKeepAlive: TimeDuration(10 * time.Second),
+					},
+				},
+			},
+			false,
+		},
+		{
+			"consul_transport_dial_timeout",
+			`consul {
+				transport {
+					dial_timeout = "10s"
+				}
+			}`,
+			&Config{
+				Consul: &ConsulConfig{
+					Transport: &TransportConfig{
+						DialTimeout: TimeDuration(10 * time.Second),
+					},
+				},
+			},
+			false,
+		},
+		{
+			"consul_transport_disable_keep_alives",
+			`consul {
+				transport {
+					disable_keep_alives = true
+				}
+			}`,
+			&Config{
+				Consul: &ConsulConfig{
+					Transport: &TransportConfig{
+						DisableKeepAlives: Bool(true),
+					},
+				},
+			},
+			false,
+		},
+		{
+			"consul_transport_max_idle_conns_per_host",
+			`consul {
+				transport {
+					max_idle_conns_per_host = 100
+				}
+			}`,
+			&Config{
+				Consul: &ConsulConfig{
+					Transport: &TransportConfig{
+						MaxIdleConnsPerHost: Int(100),
+					},
+				},
+			},
+			false,
+		},
+		{
+			"consul_transport_tls_handshake_timeout",
+			`consul {
+				transport {
+					tls_handshake_timeout = "30s"
+				}
+			}`,
+			&Config{
+				Consul: &ConsulConfig{
+					Transport: &TransportConfig{
+						TLSHandshakeTimeout: TimeDuration(30 * time.Second),
+					},
+				},
+			},
+			false,
+		},
+		{
 			"deduplicate",
 			`deduplicate {
-				enabled = true
-				TTL     = "5s"
+				enabled   = true
+				prefix    = "foo/bar"
+				max_stale = "100s"
+				TTL       = "500s"
 			}`,
 			&Config{
 				Dedup: &DedupConfig{
-					Enabled: Bool(true),
-					TTL:     TimeDuration(5 * time.Second),
+					Enabled:  Bool(true),
+					Prefix:   String("foo/bar"),
+					MaxStale: TimeDuration(100 * time.Second),
+					TTL:      TimeDuration(500 * time.Second),
 				},
 			},
 			false,
@@ -1089,6 +1173,86 @@ func TestParse(t *testing.T) {
 			&Config{
 				Vault: &VaultConfig{
 					Token: String("token"),
+				},
+			},
+			false,
+		},
+		{
+			"vault_transport_dial_keep_alive",
+			`vault {
+				transport {
+					dial_keep_alive = "10s"
+				}
+			}`,
+			&Config{
+				Vault: &VaultConfig{
+					Transport: &TransportConfig{
+						DialKeepAlive: TimeDuration(10 * time.Second),
+					},
+				},
+			},
+			false,
+		},
+		{
+			"vault_transport_dial_timeout",
+			`vault {
+				transport {
+					dial_timeout = "10s"
+				}
+			}`,
+			&Config{
+				Vault: &VaultConfig{
+					Transport: &TransportConfig{
+						DialTimeout: TimeDuration(10 * time.Second),
+					},
+				},
+			},
+			false,
+		},
+		{
+			"vault_transport_disable_keep_alives",
+			`vault {
+				transport {
+					disable_keep_alives = true
+				}
+			}`,
+			&Config{
+				Vault: &VaultConfig{
+					Transport: &TransportConfig{
+						DisableKeepAlives: Bool(true),
+					},
+				},
+			},
+			false,
+		},
+		{
+			"vault_transport_max_idle_conns_per_host",
+			`vault {
+				transport {
+					max_idle_conns_per_host = 100
+				}
+			}`,
+			&Config{
+				Vault: &VaultConfig{
+					Transport: &TransportConfig{
+						MaxIdleConnsPerHost: Int(100),
+					},
+				},
+			},
+			false,
+		},
+		{
+			"vault_transport_tls_handshake_timeout",
+			`vault {
+				transport {
+					tls_handshake_timeout = "30s"
+				}
+			}`,
+			&Config{
+				Vault: &VaultConfig{
+					Transport: &TransportConfig{
+						TLSHandshakeTimeout: TimeDuration(30 * time.Second),
+					},
 				},
 			},
 			false,

@@ -168,12 +168,6 @@ func TestCLI_ParseFlags(t *testing.T) {
 			false,
 		},
 		{
-			"config_bad_path",
-			[]string{"-config", "/not/a/real/path"},
-			nil,
-			true,
-		},
-		{
 			"consul_addr",
 			[]string{"-consul-addr", "1.2.3.4"},
 			&config.Config{
@@ -340,6 +334,66 @@ func TestCLI_ParseFlags(t *testing.T) {
 			&config.Config{
 				Consul: &config.ConsulConfig{
 					Token: config.String("token"),
+				},
+			},
+			false,
+		},
+		{
+			"consul-transport-dial-keep-alive",
+			[]string{"-consul-transport-dial-keep-alive", "30s"},
+			&config.Config{
+				Consul: &config.ConsulConfig{
+					Transport: &config.TransportConfig{
+						DialKeepAlive: config.TimeDuration(30 * time.Second),
+					},
+				},
+			},
+			false,
+		},
+		{
+			"consul-transport-dial-timeout",
+			[]string{"-consul-transport-dial-timeout", "30s"},
+			&config.Config{
+				Consul: &config.ConsulConfig{
+					Transport: &config.TransportConfig{
+						DialTimeout: config.TimeDuration(30 * time.Second),
+					},
+				},
+			},
+			false,
+		},
+		{
+			"consul-transport-disable-keep-alives",
+			[]string{"-consul-transport-disable-keep-alives"},
+			&config.Config{
+				Consul: &config.ConsulConfig{
+					Transport: &config.TransportConfig{
+						DisableKeepAlives: config.Bool(true),
+					},
+				},
+			},
+			false,
+		},
+		{
+			"consul-transport-max-idle-conns-per-host",
+			[]string{"-consul-transport-max-idle-conns-per-host", "100"},
+			&config.Config{
+				Consul: &config.ConsulConfig{
+					Transport: &config.TransportConfig{
+						MaxIdleConnsPerHost: config.Int(100),
+					},
+				},
+			},
+			false,
+		},
+		{
+			"consul-transport-tls-handshake-timeout",
+			[]string{"-consul-transport-tls-handshake-timeout", "30s"},
+			&config.Config{
+				Consul: &config.ConsulConfig{
+					Transport: &config.TransportConfig{
+						TLSHandshakeTimeout: config.TimeDuration(30 * time.Second),
+					},
 				},
 			},
 			false,
@@ -640,6 +694,66 @@ func TestCLI_ParseFlags(t *testing.T) {
 			false,
 		},
 		{
+			"vault-transport-dial-keep-alive",
+			[]string{"-vault-transport-dial-keep-alive", "30s"},
+			&config.Config{
+				Vault: &config.VaultConfig{
+					Transport: &config.TransportConfig{
+						DialKeepAlive: config.TimeDuration(30 * time.Second),
+					},
+				},
+			},
+			false,
+		},
+		{
+			"vault-transport-dial-timeout",
+			[]string{"-vault-transport-dial-timeout", "30s"},
+			&config.Config{
+				Vault: &config.VaultConfig{
+					Transport: &config.TransportConfig{
+						DialTimeout: config.TimeDuration(30 * time.Second),
+					},
+				},
+			},
+			false,
+		},
+		{
+			"vault-transport-disable-keep-alives",
+			[]string{"-vault-transport-disable-keep-alives"},
+			&config.Config{
+				Vault: &config.VaultConfig{
+					Transport: &config.TransportConfig{
+						DisableKeepAlives: config.Bool(true),
+					},
+				},
+			},
+			false,
+		},
+		{
+			"vault-transport-max-idle-conns-per-host",
+			[]string{"-vault-transport-max-idle-conns-per-host", "100"},
+			&config.Config{
+				Vault: &config.VaultConfig{
+					Transport: &config.TransportConfig{
+						MaxIdleConnsPerHost: config.Int(100),
+					},
+				},
+			},
+			false,
+		},
+		{
+			"vault-transport-tls-handshake-timeout",
+			[]string{"-vault-transport-tls-handshake-timeout", "30s"},
+			&config.Config{
+				Vault: &config.VaultConfig{
+					Transport: &config.TransportConfig{
+						TLSHandshakeTimeout: config.TimeDuration(30 * time.Second),
+					},
+				},
+			},
+			false,
+		},
+		{
 			"vault-unwrap-token",
 			[]string{"-vault-unwrap-token"},
 			&config.Config{
@@ -678,15 +792,15 @@ func TestCLI_ParseFlags(t *testing.T) {
 			out := gatedio.NewByteBuffer()
 			cli := NewCLI(out, out)
 
-			a, _, _, _, err := cli.ParseFlags(tc.f)
+			a, _, _, _, _, err := cli.ParseFlags(tc.f)
 			if (err != nil) != tc.err {
 				t.Fatal(err)
 			}
 
 			if tc.e != nil {
 				tc.e = config.DefaultConfig().Merge(tc.e)
-				tc.e.Finalize()
 			}
+
 			if !reflect.DeepEqual(tc.e, a) {
 				t.Errorf("\nexp: %#v\nact: %#v\nout: %q", tc.e, a, out.String())
 			}
@@ -760,6 +874,8 @@ func TestCLI_Run(t *testing.T) {
 			t.Fatal(err)
 		}
 
+		consul.SetKV("once_foo", []byte("bar"))
+
 		out := gatedio.NewByteBuffer()
 		cli := NewCLI(out, out)
 
@@ -768,12 +884,10 @@ func TestCLI_Run(t *testing.T) {
 			ch <- cli.Run([]string{"consul-template",
 				"-once",
 				"-dry",
-				"-consul", consul.HTTPAddr,
+				"-consul-addr", consul.HTTPAddr,
 				"-template", f.Name(),
 			})
 		}()
-
-		consul.SetKV("once_foo", []byte("bar"))
 
 		select {
 		case status := <-ch:
@@ -811,7 +925,7 @@ func TestCLI_Run(t *testing.T) {
 		go func() {
 			ch <- cli.Run([]string{"consul-template",
 				"-dry",
-				"-consul", consul.HTTPAddr,
+				"-consul-addr", consul.HTTPAddr,
 				"-template", f.Name(),
 			})
 		}()

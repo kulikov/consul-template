@@ -1,7 +1,44 @@
 Consul Template Changelog
 =========================
 
-## v0.18.0 (January 20, 2016)
+## v0.18.2 (Unreleased)
+
+IMPROVEMENTS:
+
+  * Add missing HTTP transport configuration options
+  * Add `modulo` function for performing modulo math
+
+BUG FIXES:
+
+  * Default transport max idle connections based on `GOMAXPROCS`
+
+## v0.18.1 (February 7, 2017)
+
+IMPROVEMENTS:
+
+  * Add support for tagged addresses and metadata [GH-863]
+  * Add `.exe` extension to Windows binaries [GH-875]
+  * Add support for customizing the low-level transport details for Consul and
+      Vault [GH-880, GH-877]
+  * Read token from `~/.vault-token` if it exists [GH-878, GH-884]
+
+BUG FIXES:
+
+  * Resolve an issue with filters on health service dependencies [GH-857]
+  * Restore ability to reload configurations from disk [GH-866]
+  * Move `env` back to a helper function [GH-882]
+
+    This was causing a lot of issues for users, and it required many folks to
+    re-write their templates for the small benefit of people running in
+    de-duplicate mode who did not understand the trade-offs. The README is now
+    updated with the trade-offs of running in dedup mode and the expected `env`
+    behavior has been restored.
+
+  * Do not loop indefinitely if the dedup manager is unable to acquire a lock
+      [GH-864]
+
+
+## v0.18.0 (January 20, 2017)
 
 NEW FEATURES:
 

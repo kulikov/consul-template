@@ -5,7 +5,7 @@ CURRENT_DIR := $(CURRENT_DIR:/=)
 
 # Get the project metadata
 GOVERSION := 1.8
-VERSION := 0.18.0
+VERSION := 0.18.1.dev
 PROJECT := github.com/hashicorp/consul-template
 OWNER := $(dir $(PROJECT))
 OWNER := $(notdir $(OWNER:/=))
@@ -82,7 +82,7 @@ bin-local:
 bootstrap:
 	@echo "==> Bootstrapping ${PROJECT}..."
 	@for t in ${EXTERNAL_TOOLS}; do \
-		echo "--> Installing "$$t"..." ; \
+		echo "--> Installing $$t" ; \
 		go get -u "$$t"; \
 	done
 
@@ -157,14 +157,19 @@ docker-push:
 	@docker push "${OWNER}/${NAME}:latest"
 	@docker push "${OWNER}/${NAME}:${VERSION}"
 
+# generate runs the code generator
+generate:
+	@echo "==> Generating ${PROJECT}..."
+	@go generate ${GOFILES}
+
 # test runs the test suite
 test:
 	@echo "==> Testing ${PROJECT}..."
-	@go test -timeout=60s -parallel=10 -tags="${GOTAGS}" ${GOFILES} ${TESTARGS}
+	@go test -timeout=60s -parallel=5 -tags="${GOTAGS}" ${GOFILES} ${TESTARGS}
 
 # test-race runs the race checker
 test-race:
 	@echo "==> Testing ${PROJECT} (race)..."
 	@go test -timeout=60s -race -tags="${GOTAGS}" ${GOFILES} ${TESTARGS}
 
-.PHONY: bin bin-local bootstrap deps dev dist docker docker-push test test-race
+.PHONY: bin bin-local bootstrap deps dev dist docker docker-push generate test test-race

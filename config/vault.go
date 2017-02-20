@@ -47,6 +47,9 @@ type VaultConfig struct {
 	// environment variable.
 	Token *string `mapstructure:"token" json:"-"`
 
+	// Transport configures the low-level network connection details.
+	Transport *TransportConfig `mapstructure:"transport"`
+
 	// UnwrapToken unwraps the provided Vault token as a wrapped token.
 	UnwrapToken *bool `mapstructure:"unwrap_token"`
 }
@@ -55,19 +58,9 @@ type VaultConfig struct {
 // default values.
 func DefaultVaultConfig() *VaultConfig {
 	v := &VaultConfig{
-		Address:     stringFromEnv(api.EnvVaultAddress),
-		RenewToken:  boolFromEnv("VAULT_RENEW_TOKEN"),
-		UnwrapToken: boolFromEnv("VAULT_UNWRAP_TOKEN"),
-		Retry:       DefaultRetryConfig(),
-		SSL: &SSLConfig{
-			CaCert:     stringFromEnv(api.EnvVaultCACert),
-			CaPath:     stringFromEnv(api.EnvVaultCAPath),
-			Cert:       stringFromEnv(api.EnvVaultClientCert),
-			Key:        stringFromEnv(api.EnvVaultClientKey),
-			ServerName: stringFromEnv(api.EnvVaultTLSServerName),
-			Verify:     antiboolFromEnv(api.EnvVaultInsecure),
-		},
-		Token: stringFromEnv("VAULT_TOKEN"),
+		Retry:     DefaultRetryConfig(),
+		SSL:       DefaultSSLConfig(),
+		Transport: DefaultTransportConfig(),
 	}
 
 	// Force SSL when communicating with Vault.
@@ -98,6 +91,10 @@ func (c *VaultConfig) Copy() *VaultConfig {
 	}
 
 	o.Token = c.Token
+
+	if c.Transport != nil {
+		o.Transport = c.Transport.Copy()
+	}
 
 	o.UnwrapToken = c.UnwrapToken
 
@@ -146,6 +143,10 @@ func (c *VaultConfig) Merge(o *VaultConfig) *VaultConfig {
 		r.Token = o.Token
 	}
 
+	if o.Transport != nil {
+		r.Transport = r.Transport.Merge(o.Transport)
+	}
+
 	if o.UnwrapToken != nil {
 		r.UnwrapToken = o.UnwrapToken
 	}
@@ -155,16 +156,16 @@ func (c *VaultConfig) Merge(o *VaultConfig) *VaultConfig {
 
 // Finalize ensures there no nil pointers.
 func (c *VaultConfig) Finalize() {
-	if c.Enabled == nil {
-		c.Enabled = Bool(StringPresent(c.Address))
-	}
-
 	if c.Address == nil {
-		c.Address = String("")
+		c.Address = stringFromEnv([]string{
+			api.EnvVaultAddress,
+		}, "")
 	}
 
 	if c.RenewToken == nil {
-		c.RenewToken = Bool(DefaultVaultRenewToken)
+		c.RenewToken = boolFromEnv([]string{
+			"VAULT_RENEW_TOKEN",
+		}, DefaultVaultRenewToken)
 	}
 
 	if c.Retry == nil {
@@ -174,15 +175,43 @@ func (c *VaultConfig) Finalize() {
 
 	if c.SSL == nil {
 		c.SSL = DefaultSSLConfig()
+		c.SSL.Enabled = Bool(true)
+		c.SSL.CaCert = stringFromEnv([]string{api.EnvVaultCACert}, "")
+		c.SSL.CaPath = stringFromEnv([]string{api.EnvVaultCAPath}, "")
+		c.SSL.Cert = stringFromEnv([]string{api.EnvVaultClientCert}, "")
+		c.SSL.Key = stringFromEnv([]string{api.EnvVaultClientKey}, "")
+		c.SSL.ServerName = stringFromEnv([]string{api.EnvVaultTLSServerName}, "")
+		c.SSL.Verify = antiboolFromEnv([]string{api.EnvVaultInsecure}, true)
 	}
 	c.SSL.Finalize()
 
 	if c.Token == nil {
-		c.Token = String("")
+		c.Token = stringFromEnv([]string{
+			"VAULT_TOKEN",
+		}, "")
+
+		if StringVal(c.Token) == "" {
+			if homePath != "" {
+				c.Token = stringFromFile([]string{
+					homePath + "/.vault-token",
+				}, "")
+			}
+		}
 	}
 
+	if c.Transport == nil {
+		c.Transport = DefaultTransportConfig()
+	}
+	c.Transport.Finalize()
+
 	if c.UnwrapToken == nil {
-		c.UnwrapToken = Bool(DefaultVaultUnwrapToken)
+		c.UnwrapToken = boolFromEnv([]string{
+			"VAULT_UNWRAP_TOKEN",
+		}, DefaultVaultUnwrapToken)
+	}
+
+	if c.Enabled == nil {
+		c.Enabled = Bool(StringPresent(c.Address))
 	}
 }
 
@@ -193,20 +222,22 @@ func (c *VaultConfig) GoString() string {
 	}
 
 	return fmt.Sprintf("&VaultConfig{"+
-		"Enabled:%s, "+
 		"Address:%s, "+
-		"Token:%t, "+
-		"UnwrapToken:%s, "+
+		"Enabled:%s, "+
 		"RenewToken:%s, "+
 		"Retry:%#v, "+
-		"SSL:%#v"+
+		"SSL:%#v, "+
+		"Token:%t, "+
+		"Transport:%#v, "+
+		"UnwrapToken:%s"+
 		"}",
-		BoolGoString(c.Enabled),
 		StringGoString(c.Address),
-		StringPresent(c.Token),
-		BoolGoString(c.UnwrapToken),
+		BoolGoString(c.Enabled),
 		BoolGoString(c.RenewToken),
 		c.Retry,
 		c.SSL,
+		StringPresent(c.Token),
+		c.Transport,
+		BoolGoString(c.UnwrapToken),
 	)
 }

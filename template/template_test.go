@@ -210,43 +210,6 @@ func TestTemplate_Execute(t *testing.T) {
 			false,
 		},
 		{
-			"func_env",
-			`{{ env "CT_TEST" }}`,
-			&ExecuteInput{
-				Brain: func() *Brain {
-					b := NewBrain()
-					d, err := dep.NewEnvQuery("CT_TEST")
-					if err != nil {
-						t.Fatal(err)
-					}
-					b.Remember(d, "1")
-					return b
-				}(),
-			},
-			"1",
-			false,
-		},
-		{
-			"func_env__override",
-			`{{ env "CT_TEST" }}`,
-			&ExecuteInput{
-				Env: []string{
-					"CT_TEST=2",
-				},
-				Brain: func() *Brain {
-					b := NewBrain()
-					d, err := dep.NewEnvQuery("CT_TEST")
-					if err != nil {
-						t.Fatal(err)
-					}
-					b.Remember(d, "1")
-					return b
-				}(),
-			},
-			"2",
-			false,
-		},
-		{
 			"func_file",
 			`{{ file "/path/to/file" }}`,
 			&ExecuteInput{
@@ -538,6 +501,32 @@ func TestTemplate_Execute(t *testing.T) {
 				Brain: func() *Brain {
 					b := NewBrain()
 					d, err := dep.NewHealthServiceQuery("webapp")
+					if err != nil {
+						t.Fatal(err)
+					}
+					b.Remember(d, []*dep.HealthService{
+						&dep.HealthService{
+							Node:    "node1",
+							Address: "1.2.3.4",
+						},
+						&dep.HealthService{
+							Node:    "node2",
+							Address: "5.6.7.8",
+						},
+					})
+					return b
+				}(),
+			},
+			"1.2.3.45.6.7.8",
+			false,
+		},
+		{
+			"func_service_filter",
+			`{{ range service "webapp" "passing,any" }}{{ .Address }}{{ end }}`,
+			&ExecuteInput{
+				Brain: func() *Brain {
+					b := NewBrain()
+					d, err := dep.NewHealthServiceQuery("webapp|passing,any")
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -934,6 +923,33 @@ func TestTemplate_Execute(t *testing.T) {
 			false,
 		},
 		{
+			"helper_env",
+			`{{ env "CT_TEST" }}`,
+			&ExecuteInput{
+				Brain: func() *Brain {
+					// Cheat and use the brain callback here to set the env.
+					if err := os.Setenv("CT_TEST", "1"); err != nil {
+						t.Fatal(err)
+					}
+					return NewBrain()
+				}(),
+			},
+			"1",
+			false,
+		},
+		{
+			"helper_env__override",
+			`{{ env "CT_TEST" }}`,
+			&ExecuteInput{
+				Env: []string{
+					"CT_TEST=2",
+				},
+				Brain: NewBrain(),
+			},
+			"2",
+			false,
+		},
+		{
 			"helper_executeTemplate",
 			`{{ define "custom" }}{{ key "foo" }}{{ end }}{{ executeTemplate "custom" }}`,
 			&ExecuteInput{
@@ -1244,6 +1260,15 @@ func TestTemplate_Execute(t *testing.T) {
 		{
 			"math_divide",
 			`{{ 2 | divide 2 }}`,
+			&ExecuteInput{
+				Brain: NewBrain(),
+			},
+			"1",
+			false,
+		},
+		{
+			"math_modulo",
+			`{{ 3 | modulo 2 }}`,
 			&ExecuteInput{
 				Brain: NewBrain(),
 			},
